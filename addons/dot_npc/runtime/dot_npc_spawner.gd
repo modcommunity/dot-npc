@@ -81,6 +81,23 @@ const REASON_ADMIN := &"admin"
 ## modified client that fills the world.
 @export var authoritative: bool = false
 
+@export_group("Navigation")
+
+## Remove the corners the grid put in a path that the world does not have.
+##
+## On. A graph on a two-metre grid can only turn in eight directions, so an NPC
+## crossing an open room walks a visible staircase — and it is the first thing anybody
+## watching one notices. Off is for a game whose own follower smooths, and for
+## measuring what smoothing is worth.
+@export var smooth_paths: bool = true
+
+## Walk toward an unreachable goal rather than standing still.
+##
+## On, for the reason [method DotNpcBrain.steer_along_path] falls back to steering
+## straight: an NPC that stops dead when the generator missed a corner is a bug nobody
+## can see the cause of. Detour reports the same thing as a partial result.
+@export var allow_partial_paths: bool = true
+
 @export_group("Perception")
 
 ## Physics collision mask the line-of-sight raycast uses.
@@ -88,6 +105,9 @@ const REASON_ADMIN := &"admin"
 
 ## Navigation for the map currently loaded, or null for a game that paths its own way.
 var nav: DotNpcNavGraph = null
+
+## def id -> DotNpcNavFilter, built on first use. See [method _filter_for].
+var _nav_filters: Dictionary = {}
 
 ## Shared perception. One object, because its tuning is the world's rather than an
 ## NPC's — two NPCs that gave up on a target at different ranges would be a game
@@ -191,14 +211,47 @@ func path_toward(npc: DotNpcInstance, path: DotNpcPath, goal: Vector3) -> Vector
 		return goal
 
 	if path.needs_repath(_now, goal, repath_interval, repath_drift):
-		path.set_points(
-			nav.find_path(npc.position(), goal, limits.spawn_snap_radius), _now, goal
+		# The filter is set per search rather than held on the graph, because one
+		# graph serves every NPC on the map and they do not agree about it: the thing
+		# that cannot crouch and the thing that can are asking different questions of
+		# the same points.
+		nav.filter = _filter_for(npc.def)
+
+		var found := (
+			nav.find_smooth_path(
+				npc.position(), goal, limits.spawn_snap_radius, allow_partial_paths
+			) if smooth_paths
+			else nav.find_path(
+				npc.position(), goal, limits.spawn_snap_radius, allow_partial_paths
+			)
 		)
+
+		path.set_points(found, _now, goal)
+		path.partial = nav.last_partial
 
 	if path.is_empty():
 		return goal
 
 	return path.advance(npc.position(), goal)
+
+
+## The navigation filter for one kind of NPC, built once and kept.
+##
+## Cached because a filter is rebuilt on every repath otherwise — a few hundred
+## allocations a second on a busy server for an object whose contents never change
+## once the catalogue is loaded.
+func _filter_for(def: DotNpcDef) -> DotNpcNavFilter:
+	if def == null or def.nav_exclude_flags == 0:
+		return null
+
+	if _nav_filters.has(def.id):
+		return _nav_filters[def.id]
+
+	var filter := DotNpcNavFilter.new()
+	filter.exclude_flags = def.nav_exclude_flags
+	_nav_filters[def.id] = filter
+
+	return filter
 
 
 # --- Perception input ---------------------------------------------------------

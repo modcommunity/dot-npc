@@ -99,6 +99,18 @@ enum Weight {
 ## most expensive thing in here.
 @export var require_line_of_sight: bool = true
 
+@export_group("Navigation")
+
+## Navigation flags this kind of NPC cannot traverse. See [enum DotNpcNavData.Flag].
+##
+## [b]On the definition rather than on the graph, because it is a property of the
+## thing walking.[/b] A crouch tunnel is a fact about the map; whether it is a way
+## through is a fact about what is trying to use it, and one graph serves every NPC on
+## the map. Zero — the default — is an NPC that will go anywhere the graph goes.
+@export_flags(
+	"Crouch:1", "Jump:2", "Avoid:4", "Stop:8", "Walk:16", "Door:32"
+) var nav_exclude_flags: int = 0
+
 @export_group("Permission")
 
 ## An admin permission required to spawn one by hand. Empty for anybody.
@@ -180,6 +192,8 @@ func to_dictionary() -> Dictionary:
 		out["content"] = String(content_id)
 	if not require_line_of_sight:
 		out["los"] = false
+	if nav_exclude_flags != 0:
+		out["nav_exclude"] = nav_exclude_flags
 	if permission != "":
 		out["permission"] = permission
 	if not enabled:
@@ -210,6 +224,7 @@ static func from_dictionary(data: Dictionary) -> DotNpcDef:
 	npc.sight_half_angle_deg = clampf(float(data.get("sight_angle", 60.0)), 0.0, 180.0)
 	npc.hearing_range = maxf(float(data.get("hearing", 12.0)), 0.0)
 	npc.require_line_of_sight = bool(data.get("los", true))
+	npc.nav_exclude_flags = maxi(int(data.get("nav_exclude", 0)), 0)
 	npc.permission = str(data.get("permission", ""))
 	npc.enabled = bool(data.get("enabled", true))
 

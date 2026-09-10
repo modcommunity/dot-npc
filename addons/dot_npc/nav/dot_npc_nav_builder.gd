@@ -53,7 +53,22 @@ var point_radius: float = 2.0
 ## radius of zero puts points against the geometry and every path scrapes it.
 var clearance: float = 0.6
 
-## Walkable areas as {aabb, height} — the floors the map built.
+## Whether to record cover spots beside the obstacles.
+##
+## On, because it costs one pass over the points at generation time and a game that
+## does not use cover simply never asks for it. The spots are content: a runtime that
+## was handed a graph cannot raycast the map it came from, so if the generator does
+## not write them down nothing can ever answer "where can I hide from that".
+var generate_cover: bool = true
+
+## How close a point must be to an obstacle to count as cover, in metres.
+##
+## One and a half body widths past the clearance. Closer and only points already
+## scraping the wall qualify; further and the middle of a corridor is "cover", which
+## makes an NPC take cover in the open and is worse than having no cover at all.
+var cover_range: float = 1.6
+
+## Walkable areas as {aabb, height, area_id, flags} — the floors the map built.
 var _floors: Array = []
 
 ## Solid boxes that a point may not be inside of.
@@ -66,8 +81,18 @@ var _links: Array = []
 
 ## Adds a walkable rectangle. [param area] is used for its X and Z; Y comes from
 ## [param stand_height], which is where an NPC's feet go.
-func add_floor(area: AABB, stand_height: float) -> void:
-	_floors.append({"area": area, "height": stand_height})
+func add_floor(
+	area: AABB,
+	stand_height: float,
+	area_id: int = DotNpcNavData.AREA_GROUND,
+	point_flags: int = 0
+) -> void:
+	_floors.append({
+		"area": area,
+		"height": stand_height,
+		"area_id": area_id,
+		"flags": point_flags,
+	})
 
 
 ## Adds a box nothing may stand inside.
@@ -81,8 +106,8 @@ func add_obstacle(box: AABB) -> void:
 ## a map with two storeys has two disconnected graphs and an NPC upstairs can never
 ## reach the ground. A stair built as a ramp is one floor and is fine; a stair built as
 ## steps is not, which is most of them here.
-func add_link(from: Vector3, to: Vector3) -> void:
-	_links.append([from, to])
+func add_link(from: Vector3, to: Vector3, link_flags: int = 0) -> void:
+	_links.append([from, to, link_flags])
 
 
 ## Generates the data. [param digest] comes from [method DotNpcNavData.digest_of].
@@ -91,16 +116,22 @@ func build(map_id: StringName, digest: String) -> DotNpcNavData:
 	nav.map_id = map_id
 	nav.source_digest = digest
 	nav.point_radius = point_radius
+	nav.grid_spacing = spacing
 
 	# Point key -> index, where the key is the quantised position. Two floors that
 	# overlap — a landing and the walkway it joins — would otherwise put two points in
 	# the same spot, and an NPC standing between them oscillates.
 	var seen := {}
 	var positions: Array[Vector3] = []
+	var point_areas: Array[int] = []
+	var point_flags: Array[int] = []
 
 	for entry in _floors:
-		var area: AABB = (entry as Dictionary)["area"]
-		var height := float((entry as Dictionary)["height"])
+		var floor_data: Dictionary = entry
+		var area: AABB = floor_data["area"]
+		var height := float(floor_data["height"])
+		var floor_area_id := int(floor_data.get("area_id", DotNpcNavData.AREA_GROUND))
+		var floor_flags := int(floor_data.get("flags", 0))
 
 		var x := area.position.x + spacing * 0.5
 
@@ -121,11 +152,13 @@ func build(map_id: StringName, digest: String) -> DotNpcNavData:
 
 				seen[key] = positions.size()
 				positions.append(p)
+				point_areas.append(floor_area_id)
+				point_flags.append(floor_flags)
 
 			x += spacing
 
-	for p in positions:
-		nav.add_point(p)
+	for i in positions.size():
+		nav.add_point(positions[i], point_areas[i], point_flags[i])
 
 	# Neighbours within one and a half spacings, so the four cardinals and the four
 	# diagonals join and nothing further does. A plain `spacing` misses the diagonal
@@ -158,6 +191,16 @@ func build(map_id: StringName, digest: String) -> DotNpcNavData:
 
 		if a >= 0 and b >= 0 and a != b:
 			nav.connect_points(a, b)
+
+			# Flags are per point and a link is an edge, so the flags land on both
+			# ends. Source does the same thing for the same reason — its JUMP
+			# attribute is on the area, and "you had to jump to get here" is close
+			# enough to "getting between these two is a jump" that no follower has
+			# ever needed the difference.
+			var link_flags := int(pair[2]) if pair.size() > 2 else 0
+			if link_flags != 0:
+				nav.add_flags(a, link_flags)
+				nav.add_flags(b, link_flags)
 		else:
 			DotLog.warn(CHANNEL, "a navigation link found no point at one end", {
 				"map": String(map_id),
@@ -165,7 +208,59 @@ func build(map_id: StringName, digest: String) -> DotNpcNavData:
 				"to": str(pair[1]),
 			})
 
+	if generate_cover:
+		_mark_cover(nav)
+
 	return nav
+
+
+## Records a cover spot beside every point that has an obstacle close enough to hide
+## behind, with the normal pointing at the obstacle.
+##
+## [b]One spot per point, not one per obstacle.[/b] A point in an inside corner has two
+## walls and would otherwise produce two spots in the same place with different
+## normals, which is not two places to hide — it is one place that is good against two
+## directions, and the query picks whichever wall is nearest to the threat anyway.
+##
+## Only [constant DotNpcNavData.Cover.IN_COVER] is generated. Source also classifies
+## sniper spots and exposed ledges, which needs long visibility traces over the whole
+## map; a generator with the geometry in front of it can add those itself, and the
+## flags exist so it can.
+func _mark_cover(nav: DotNpcNavData) -> void:
+	for i in nav.points.size():
+		if (nav.flags_of(i) & DotNpcNavData.Flag.NO_HIDE) != 0:
+			continue
+
+		var p := nav.points[i]
+		var best := Vector3.ZERO
+		var best_distance := INF
+
+		for box in _obstacles:
+			# The nearest point on the box to this one, which decides both whether it
+			# is close enough and which way the wall lies.
+			var nearest := Vector3(
+				clampf(p.x, box.position.x, box.position.x + box.size.x),
+				clampf(p.y, box.position.y, box.position.y + box.size.y),
+				clampf(p.z, box.position.z, box.position.z + box.size.z)
+			)
+
+			var to_box := nearest - p
+			# Measured horizontally. The floor an NPC stands on is an obstacle
+			# directly below it, and taking cover behind the ground is not a thing.
+			to_box.y = 0.0
+
+			var distance := to_box.length()
+			if distance > cover_range or distance >= best_distance:
+				continue
+
+			if distance <= 0.0001:
+				continue
+
+			best_distance = distance
+			best = to_box / distance
+
+		if best_distance < INF:
+			nav.add_cover(p, best, DotNpcNavData.Cover.IN_COVER)
 
 
 func _key(p: Vector3) -> String:
@@ -203,5 +298,6 @@ func describe() -> Dictionary:
 		"floors": _floors.size(),
 		"obstacles": _obstacles.size(),
 		"links": _links.size(),
+		"cover": generate_cover,
 		"spacing": spacing,
 	}

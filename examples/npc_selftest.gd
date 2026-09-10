@@ -42,6 +42,10 @@ func _run() -> void:
 	_test_nav_data()
 	_test_nav_builder()
 	_test_nav_graph()
+	_test_nav_smoothing()
+	_test_nav_filter()
+	_test_nav_partial()
+	_test_nav_cover()
 	_test_path()
 	_test_senses_basics()
 	_test_senses_commitment()
@@ -52,6 +56,7 @@ func _run() -> void:
 	_test_per_kind_cap()
 	_test_spawn_interval()
 	_test_navigable_spawn()
+	_test_spawner_pathing()
 	_test_brains()
 	_test_damage()
 	_test_reclaim()
@@ -377,6 +382,335 @@ func _test_nav_graph() -> void:
 	_check(nowhere.is_empty(), "a goal off the graph gives no path at all")
 
 
+# --- Smoothing, filters, partial paths and cover ----------------------------
+
+## Whether any leg of a path enters a box.
+func _path_enters(path: PackedVector3Array, box: AABB, samples: int = 12) -> bool:
+	for i in range(path.size() - 1):
+		for s in samples + 1:
+			if box.has_point(path[i].lerp(path[i + 1], float(s) / float(samples))):
+				return true
+	return false
+
+
+## Whether any waypoint of a path is inside a box.
+##
+## Deliberately not [method _path_enters], which samples the segments too. A grid
+## graph with diagonals routes round a box-shaped area by clipping its corner between
+## two waypoints — the NPC never stands in the water and the straight line between two
+## steps grazes it. Asking about the waypoints is asking the question the pathfinder
+## actually answered.
+func _path_visits(path: PackedVector3Array, box: AABB) -> bool:
+	for point in path:
+		if box.has_point(point):
+			return true
+	return false
+
+
+func _path_length(path: PackedVector3Array) -> float:
+	var total := 0.0
+	for i in range(path.size() - 1):
+		total += path[i].distance_to(path[i + 1])
+	return total
+
+
+func _test_nav_smoothing() -> void:
+	print("navigation smoothing")
+
+	# An empty room. Every waypoint between the ends is the grid's, not the world's.
+	var builder := DotNpcNavBuilder.new()
+	builder.spacing = 2.0
+	builder.add_floor(AABB(Vector3(-12, 0, -12), Vector3(24, 0, 24)), 0.0)
+
+	var graph := DotNpcNavGraph.new(builder.build(&"open", "digest"))
+	var from := Vector3(-9, 0, -9)
+	var to := Vector3(9, 0, 9)
+
+	var raw := graph.find_path(from, to, 3.0)
+	var smooth := graph.smooth_path(raw)
+
+	_check(raw.size() > 4, "a grid path across an open room has many waypoints",
+		"%d" % raw.size())
+	_check(
+		smooth.size() < raw.size(),
+		"and smoothing removes the ones the world does not have",
+		"%d -> %d" % [raw.size(), smooth.size()]
+	)
+
+	var straight := from.distance_to(to)
+	_check(
+		_path_length(smooth) <= _path_length(raw) + 0.001,
+		"a smoothed path is never longer than the one it came from",
+		"%.2f m against %.2f m" % [_path_length(smooth), _path_length(raw)]
+	)
+	_check(
+		_path_length(smooth) < straight * 1.15,
+		"and across an empty room it is very nearly the straight line",
+		"%.2f m against %.2f m straight" % [_path_length(smooth), straight]
+	)
+
+	_check(
+		smooth[0] == from and smooth[smooth.size() - 1] == to,
+		"and it still begins and ends where the caller is"
+	)
+
+	# The one that matters. Smoothing is a shortcut and a shortcut through a wall is
+	# worse than the staircase it replaced.
+	var wall := AABB(Vector3(-2, 0, -12), Vector3(4, 4, 20))
+	var bent := DotNpcNavBuilder.new()
+	bent.spacing = 2.0
+	bent.add_floor(AABB(Vector3(-12, 0, -12), Vector3(24, 0, 24)), 0.0)
+	bent.add_obstacle(wall)
+
+	var bent_graph := DotNpcNavGraph.new(bent.build(&"bent", "digest"))
+	var around := bent_graph.find_smooth_path(Vector3(-8, 0, 0), Vector3(8, 0, 0), 3.0)
+
+	_check(not around.is_empty(), "a smoothed path is still found around a wall")
+	_check(
+		not _path_enters(around, wall),
+		"and no leg of it cuts through the wall it went round"
+	)
+
+	_check(
+		bent_graph.can_walk_straight(Vector3(-8, 0, 8), Vector3(-8, 0, -8)),
+		"a clear line is walkable"
+	)
+	_check(
+		not bent_graph.can_walk_straight(Vector3(-8, 0, 0), Vector3(8, 0, 0)),
+		"and one through the wall is not"
+	)
+
+	var two := PackedVector3Array([from, to])
+	_check(
+		graph.smooth_path(two).size() == 2,
+		"a path with nothing to remove comes back unchanged"
+	)
+
+
+func _test_nav_filter() -> void:
+	print("navigation filter")
+
+	# The water strip is added first, because the first floor to claim a grid cell
+	# keeps it — so the ground added afterwards fills in around it.
+	var builder := DotNpcNavBuilder.new()
+	builder.spacing = 2.0
+	builder.generate_cover = false
+	# Aligned with the ground grid on purpose: both floors start on an odd metre, so
+	# their cells coincide and the first one to claim a cell keeps it. Two floors
+	# whose grids are offset produce two interleaved sets of points a metre apart and
+	# the strip stops being a barrier at all — which is not a bug in the builder, and
+	# is exactly the mistake a generator makes once.
+	var water := AABB(Vector3(-4, 0, -6), Vector3(8, 0, 12))
+	builder.add_floor(water, 0.0, DotNpcNavData.AREA_WATER)
+	builder.add_floor(AABB(Vector3(-14, 0, -14), Vector3(28, 0, 28)), 0.0)
+
+	var nav := builder.build(&"pond", "digest")
+	var wet := 0
+	for i in nav.point_count():
+		if nav.area_of(i) == DotNpcNavData.AREA_WATER:
+			wet += 1
+
+	_check(wet > 0, "a floor can be given an area id", "%d wet points" % wet)
+	_check(wet < nav.point_count(), "and the rest of the map keeps its own")
+
+	var graph := DotNpcNavGraph.new(nav)
+	var from := Vector3(-10, 0, 0)
+	var to := Vector3(10, 0, 0)
+
+	var straight_through := graph.find_path(from, to, 3.0)
+	_check(
+		_path_visits(straight_through, water),
+		"with no filter the shortest way is straight through the water"
+	)
+
+	var filter := DotNpcNavFilter.new()
+	_check(filter.set_area_cost(DotNpcNavData.AREA_WATER, 20.0).ok, "an area can cost more")
+	_check(
+		not filter.set_area_cost(DotNpcNavData.AREA_WATER, 0.0).ok,
+		"and cannot cost nothing: a free step makes A* prefer a cycle"
+	)
+	_check(not filter.set_area_cost(999, 2.0).ok, "an area id out of range is refused")
+
+	graph.filter = filter
+	var around := graph.find_path(from, to, 3.0)
+
+	_check(not around.is_empty(), "a costly area is still passable")
+	_check(
+		not _path_visits(around, water),
+		"and the path goes round it when going round is cheaper"
+	)
+	_check(
+		_path_length(around) > _path_length(straight_through),
+		"which is a longer walk, deliberately",
+		"%.1f m against %.1f m" % [
+			_path_length(around), _path_length(straight_through)
+		]
+	)
+
+	# The whole reason cost beats a ban: make the detour expensive enough and the NPC
+	# wades, rather than standing at the edge of the puddle for ever.
+	filter.set_area_cost(DotNpcNavData.AREA_WATER, 1.05)
+	var wading := graph.find_path(from, to, 3.0)
+	_check(
+		_path_visits(wading, water),
+		"and it wades when the detour is worse than the crossing"
+	)
+
+	# Flags are the other half: impassable rather than expensive.
+	var crouch_builder := DotNpcNavBuilder.new()
+	crouch_builder.spacing = 2.0
+	crouch_builder.generate_cover = false
+	crouch_builder.add_floor(
+		AABB(Vector3(-4, 0, -30), Vector3(8, 0, 60)), 0.0,
+		DotNpcNavData.AREA_GROUND, DotNpcNavData.Flag.CROUCH
+	)
+	crouch_builder.add_floor(AABB(Vector3(-14, 0, -14), Vector3(28, 0, 28)), 0.0)
+
+	var tunnel := DotNpcNavGraph.new(crouch_builder.build(&"tunnel", "digest"))
+	_check(
+		not tunnel.find_path(from, to, 3.0).is_empty(),
+		"something that can crouch gets through a crouch corridor"
+	)
+
+	tunnel.filter = DotNpcNavFilter.walking_only()
+	_check(
+		tunnel.find_path(from, to, 3.0).is_empty(),
+		"and something that cannot, does not"
+	)
+
+	# The filter refuses the start point too. Without that an NPC standing at the
+	# mouth of the tunnel snaps onto a point it may not occupy and every path from it
+	# fails at the first edge, which reads as a broken graph rather than a filter.
+	_check(
+		tunnel.find_path(Vector3(0, 0, 0), Vector3(10, 0, 0), 1.5).is_empty(),
+		"standing on an excluded point is not a place to path from"
+	)
+
+	_check(DotNpcNavFilter.neutral().is_neutral(), "a neutral filter says so")
+	_check(not DotNpcNavFilter.walking_only().is_neutral(), "and a real one does not")
+	_check(
+		not DotNpcNavFilter.neutral().duplicate_filter().is_neutral() == false,
+		"a filter can be copied"
+	)
+
+
+func _test_nav_partial() -> void:
+	print("navigation partial paths")
+
+	# Two rooms with nothing joining them.
+	var builder := DotNpcNavBuilder.new()
+	builder.spacing = 2.0
+	builder.generate_cover = false
+	builder.add_floor(AABB(Vector3(-14, 0, -6), Vector3(10, 0, 12)), 0.0)
+	builder.add_floor(AABB(Vector3(6, 0, -6), Vector3(10, 0, 12)), 0.0)
+
+	var graph := DotNpcNavGraph.new(builder.build(&"split", "digest"))
+	var from := Vector3(-12, 0, 0)
+	var to := Vector3(12, 0, 0)
+
+	_check(graph.find_path(from, to, 3.0).is_empty(), "an unreachable goal gives no path")
+	_check(not graph.last_partial, "and does not claim to be partial")
+
+	var partial := graph.find_path(from, to, 3.0, true)
+	_check(not partial.is_empty(), "unless a partial path was asked for")
+	_check(graph.last_partial, "which says so")
+
+	var end := partial[partial.size() - 1]
+	_check(
+		end.distance_to(to) > 1.0,
+		"a partial path stops short of the goal",
+		"%.1f m short" % end.distance_to(to)
+	)
+	_check(
+		end.distance_to(to) < from.distance_to(to),
+		"but closer to it than where the NPC started"
+	)
+	_check(
+		end.x < 6.0,
+		"and it does not step across the gap it could not path over",
+		"ended at x=%.1f" % end.x
+	)
+
+	var reachable := graph.find_path(from, Vector3(-8, 0, 4), 3.0, true)
+	_check(not reachable.is_empty(), "a reachable goal is unaffected")
+	_check(not graph.last_partial, "and is not reported as partial")
+
+
+func _test_nav_cover() -> void:
+	print("navigation cover")
+
+	var wall := AABB(Vector3(-1, 0, -10), Vector3(2, 3, 20))
+	var builder := DotNpcNavBuilder.new()
+	builder.spacing = 2.0
+	builder.add_floor(AABB(Vector3(-12, 0, -12), Vector3(24, 0, 24)), 0.0)
+	builder.add_obstacle(wall)
+
+	var nav := builder.build(&"cover", "digest")
+
+	_check(nav.cover_count() > 0, "the generator records cover beside a wall",
+		"%d spots" % nav.cover_count())
+
+	var all_beside := true
+	for i in nav.cover_count():
+		if absf(nav.cover_positions[i].x) > 4.0:
+			all_beside = false
+	_check(all_beside, "and only beside it, not in the middle of the room")
+
+	var all_horizontal := true
+	for n in nav.cover_normals:
+		if absf(n.y) > 0.001:
+			all_horizontal = false
+	_check(
+		all_horizontal,
+		"a cover normal is horizontal: the floor is an obstacle directly below and "
+		+ "hiding behind the ground is not a thing"
+	)
+
+	# A threat to the west. The spot to take is east of the wall, with its normal
+	# pointing back at the wall — which is the direction of the threat.
+	var index := nav.best_cover(Vector3(6, 0, 0), Vector3(-9, 0, 0), 20.0)
+	_check(index >= 0, "cover is found from a threat")
+	_check(
+		nav.cover_positions[index].x > 0.0,
+		"on the far side of the wall from the threat",
+		"x = %.1f" % nav.cover_positions[index].x
+	)
+
+	var west := nav.best_cover(Vector3(-6, 0, 0), Vector3(9, 0, 0), 20.0)
+	_check(
+		west >= 0 and nav.cover_positions[west].x < 0.0,
+		"and the other way round when the threat moves"
+	)
+
+	var far := nav.best_cover(Vector3(6, 0, 0), Vector3(-9, 0, 0), 1.0)
+	_check(far < 0, "nothing within reach means no cover, not the best of a bad lot")
+
+	var open := DotNpcNavBuilder.new()
+	open.spacing = 2.0
+	open.add_floor(AABB(Vector3(-12, 0, -12), Vector3(24, 0, 24)), 0.0)
+	_check(
+		open.build(&"open", "digest").cover_count() == 0,
+		"a room with nothing in it has nowhere to hide"
+	)
+
+	var no_hide := DotNpcNavBuilder.new()
+	no_hide.spacing = 2.0
+	no_hide.add_floor(
+		AABB(Vector3(-12, 0, -12), Vector3(24, 0, 24)), 0.0,
+		DotNpcNavData.AREA_GROUND, DotNpcNavData.Flag.NO_HIDE
+	)
+	no_hide.add_obstacle(wall)
+	_check(
+		no_hide.build(&"nohide", "digest").cover_count() == 0,
+		"and a floor marked NO_HIDE generates none"
+	)
+
+	_check(
+		nav.cover_position_from(Vector3(6, 0, 0), Vector3(-9, 0, 0)).x > 0.0,
+		"the position helper answers the same question"
+	)
+
+
 func _test_path() -> void:
 	print("path following")
 
@@ -699,6 +1033,106 @@ func _test_navigable_spawn() -> void:
 
 	spawner.set_nav_data(null)
 	_check(not spawner.has_nav(), "and navigation can be cleared on a map change")
+
+	spawner.queue_free()
+
+
+func _test_spawner_pathing() -> void:
+	print("spawner pathing")
+
+	var limits := _limits()
+	limits.spawn_snap_radius = 3.0
+
+	var spawner := _spawner(limits)
+
+	var builder := DotNpcNavBuilder.new()
+	builder.spacing = 2.0
+	builder.generate_cover = false
+	# A crouch tunnel joining two rooms, and nothing else joining them.
+	builder.add_floor(AABB(Vector3(-4, 0, -4), Vector3(8, 0, 8)), 0.0)
+	builder.add_floor(
+		AABB(Vector3(4, 0, -2), Vector3(12, 0, 4)), 0.0,
+		DotNpcNavData.AREA_GROUND, DotNpcNavData.Flag.CROUCH
+	)
+	builder.add_floor(AABB(Vector3(16, 0, -4), Vector3(8, 0, 8)), 0.0)
+
+	spawner.set_nav_data(builder.build(&"tunnel", "digest"))
+	_check(spawner.has_nav(), "the tunnel map is adopted")
+
+	var npc := spawner.spawn(&"walker", Vector3(-2, 0, 0))
+	_check(npc != null, "an NPC spawns in the near room")
+
+	var goal := Vector3(18, 0, 0)
+	var path := DotNpcPath.new()
+	var step := spawner.path_toward(npc, path, goal)
+
+	_check(not path.is_empty(), "and paths through the tunnel to the far room")
+	_check(step != goal, "so its next step is a waypoint rather than the goal itself")
+	_check(not path.partial, "and the path is not partial")
+
+	# The same map, the same NPC, one flag on its definition. Nothing else changes.
+	npc.def.nav_exclude_flags = DotNpcNavData.Flag.CROUCH
+
+	var blocked_path := DotNpcPath.new()
+	var blocked_step := spawner.path_toward(npc, blocked_path, goal)
+
+	_check(
+		blocked_path.is_empty() or blocked_path.partial,
+		"an NPC that cannot crouch does not get a path through a crouch tunnel",
+		"which is the definition's flag reaching the graph's filter"
+	)
+	_check(
+		blocked_step != goal or blocked_path.is_empty(),
+		"and is not simply handed the goal as if the tunnel were open"
+	)
+
+	# Smoothing is on by default and is the reason a path is worth following. Turning
+	# it off must produce more waypoints for the same walk, or nothing is smoothing.
+	npc.def.nav_exclude_flags = 0
+
+	var open := DotNpcNavBuilder.new()
+	open.spacing = 2.0
+	open.generate_cover = false
+	open.add_floor(AABB(Vector3(-12, 0, -12), Vector3(24, 0, 24)), 0.0)
+	spawner.set_nav_data(open.build(&"open", "digest"))
+
+	var far := Vector3(9, 0, 9)
+	npc.node.global_position = Vector3(-9, 0, -9)
+
+	var smooth := DotNpcPath.new()
+	spawner.path_toward(npc, smooth, far)
+
+	spawner.smooth_paths = false
+	var rough := DotNpcPath.new()
+	spawner.path_toward(npc, rough, far)
+
+	_check(
+		smooth.points.size() < rough.points.size(),
+		"the spawner smooths by default, and turning it off is visible",
+		"%d smoothed against %d raw" % [smooth.points.size(), rough.points.size()]
+	)
+
+	# The flag has to survive a catalogue round trip, or a delivered NPC loses the one
+	# thing that keeps it out of a tunnel it cannot use.
+	var def := DotNpcDef.make(&"crawler", "res://x.tscn")
+	def.nav_exclude_flags = DotNpcNavData.Flag.CROUCH | DotNpcNavData.Flag.JUMP
+	var back := DotNpcDef.from_dictionary(def.to_dictionary())
+	_check(
+		back.nav_exclude_flags == def.nav_exclude_flags,
+		"and it survives a definition round trip"
+	)
+
+	var plain := DotNpcDef.from_dictionary(DotNpcDef.make(&"x", "res://x.tscn").to_dictionary())
+	_check(plain.nav_exclude_flags == 0, "a definition without one keeps none")
+
+	var path_flag := DotNpcPath.new()
+	path_flag.partial = true
+	path_flag.set_points(PackedVector3Array([Vector3.ZERO, Vector3.ONE]), 0.0, Vector3.ONE)
+	_check(
+		not path_flag.partial,
+		"new points clear the partial flag, so it never describes the previous path"
+	)
+	_check(path_flag.reaches_goal(), "and a complete path says it reaches its goal")
 
 	spawner.queue_free()
 

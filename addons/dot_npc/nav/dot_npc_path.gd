@@ -35,12 +35,25 @@ var computed_at: float = 0.0
 ## answers "is this path still about the right thing".
 var goal_at_compute: Vector3 = Vector3.ZERO
 
+## Whether the points stop short of the goal because it could not be reached.
+##
+## Set by whatever produced them — the spawner copies
+## [member DotNpcNavGraph.last_partial] — and read by a brain that would otherwise
+## repath to an unreachable target for ever. [b]Following a partial path is correct;
+## believing it ends at the goal is not.[/b]
+var partial: bool = false
+
 
 func set_points(p_points: PackedVector3Array, now: float, goal: Vector3) -> void:
 	points = p_points
 	index = 1 if p_points.size() > 1 else 0
 	computed_at = now
 	goal_at_compute = goal
+	# Cleared here rather than left to the caller. set_points is the only way new
+	# points arrive, so a flag that survived one would describe the previous path —
+	# and "this path is partial" is exactly the kind of stale answer that reads as
+	# correct.
+	partial = false
 
 
 func is_empty() -> bool:
@@ -95,6 +108,11 @@ func remaining_length(position: Vector3) -> float:
 		total += points[i].distance_to(points[i + 1])
 
 	return total
+
+
+## Whether this path reaches what it was asked for.
+func reaches_goal() -> bool:
+	return not is_empty() and not partial
 
 
 func clear() -> void:

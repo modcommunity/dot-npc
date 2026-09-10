@@ -85,6 +85,26 @@ A game with authored geometry should use Godot's own `NavigationRegion3D` instea
 nothing here stops it: a spawner with no nav data spawns anywhere, and a brain that owns
 a `NavigationAgent3D` paths with that.
 
+What the graph does beyond A*, all of it read out of Recast & Detour and Source's
+`nav_mesh`:
+
+| | |
+| --- | --- |
+| **Smoothing** | A two-metre grid can only turn eight ways, so a path across an open room is a visible staircase. `find_smooth_path` removes the corners the world does not have. On by default. |
+| **Areas** | A point can be water, a hazard, a doorway. `DotNpcNavFilter` gives an area a cost, so an NPC goes round the pond — and wades when going round is worse. |
+| **Flags** | Crouch, jump, avoid, door. `DotNpcDef.nav_exclude_flags` says what one kind of NPC cannot use, because a crouch tunnel is a fact about the map and whether it is a way through is a fact about the NPC. |
+| **Partial paths** | An unreachable goal gives the best path toward it rather than nothing, and `DotNpcPath.partial` says so — following one is correct, believing it arrives is not. |
+| **Cover** | The generator records where the walls are and which way they face, so a brain can ask "where do I hide from that" on a map it only has a graph of. |
+
+```gdscript
+var filter := DotNpcNavFilter.new()
+filter.set_area_cost(DotNpcNavData.AREA_WATER, 6.0)
+graph.filter = filter
+
+var path := graph.find_smooth_path(from, to, 2.0, true)   # smoothed, may be partial
+var spot := nav.cover_position_from(npc.position(), enemy_position)
+```
+
 ## The family
 
 `dot-npc` is what an NPC **is**. `dot-npc-ai` is how one **decides** — behaviour trees,
@@ -100,7 +120,7 @@ godot --headless --path . --import
 timeout 120 godot --headless --path . res://examples/npc_selftest.tscn
 ```
 
-126 checks, exits non-zero on failure.
+183 checks, exits non-zero on failure.
 
 ## Licence
 

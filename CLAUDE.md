@@ -55,9 +55,11 @@ addons/dot_npc/
     dot_npc_senses.gd       What it can perceive, and what it has committed to.
     dot_npc_brain.gd        The class a game's NPC script extends, by path.
   nav/
-    dot_npc_nav_data.gd     Where an NPC may stand, plus the staleness digest.
+    dot_npc_nav_data.gd     Where an NPC may stand, plus areas, flags, cover and
+                            the staleness digest.
     dot_npc_nav_builder.gd  Generates that from a map's own constants.
-    dot_npc_nav_graph.gd    A* over it, and the path a follower walks.
+    dot_npc_nav_filter.gd   Which points one NPC may use and what they cost it.
+    dot_npc_nav_graph.gd    A* over it, smoothing, partial paths.
     dot_npc_path.gd         A path being walked. Following is not searching.
   net/
     dot_npc_net_sync.gd     What replicates, as strings. Never names dot-net.
@@ -96,6 +98,88 @@ A game with authored geometry should use Godot's navigation instead, and nothing
 stops it: a spawner with no nav data spawns anywhere, and a brain that owns a
 `NavigationAgent3D` paths with that. This exists so that a code-built map is not the one
 shape of map that cannot have NPCs.
+
+## What a path is worth, and the three things that decide it
+
+The graph half was a search and nothing else for its first pass: A*, a chain of grid
+points, and a follower that walked them. Everything below came out of reading
+[Recast & Detour](../../external-study/game-dev/navigation/recastnavigation) and
+Source's `nav_mesh`, which are in `external-study` for exactly this and which had been
+read for nothing until now.
+
+### Smoothing, because a grid can only turn eight ways
+
+A two-metre grid crossing an open room produces a staircase — an NPC visibly zig-zags
+across ground with nothing in it, and it is the first thing anybody watching one
+notices. Detour solves the polygon version with the funnel algorithm
+(`dtFindStraightPath`); `dtPathCorridor::optimizePathVisibility` is the incremental
+form. `DotNpcNavGraph.smooth_path` is the point-graph version of the same idea: from
+each kept waypoint, reach as far ahead as is still walkable in a straight line and drop
+everything between.
+
+**The naive walkability test passes straight through walls, and it took the suite to
+say so.** "Is every sample along the line near some point" is true inside any wall thin
+enough to have graph points on both sides of it — a sample in the middle is within
+reach of the points beside it. The fix is not a tighter threshold, which only moves the
+wall thickness at which it breaks; it is to ask a different question. The **builder**
+already refused to connect two points whose straight line crossed an obstacle, so
+`can_walk_straight` walks the nearest-point sequence along the line and requires each
+step to be an edge the builder actually drew. Connectivity, not proximity, and the
+answer is exact rather than a margin.
+
+That is also why `DotNpcNavData.grid_spacing` exists. Sampling has to happen at under
+half a cell or the nearest point can skip one, and `point_radius` is not that number —
+it is how far off the mesh an NPC may stand, which a generator may set to anything.
+
+### Areas and flags, because "passable" is two questions
+
+`DotNpcNavFilter` is Detour's `dtQueryFilter` in the shape a point graph needs.
+
+- **Cost, for things that are passable and unpleasant.** A ban cannot express "go round
+  the water unless going round is much worse", and an NPC that will never step in water
+  stands at the edge of a puddle for ever when the puddle is the only way through. The
+  suite has both halves: at a cost of 20 it walks round, at 1.05 it wades.
+- **Flags, for things that are impassable to *this* NPC.** A crouch tunnel is a fact
+  about the map; whether it is a way through is a fact about what is trying to use it.
+  So the flag set lives on `DotNpcDef.nav_exclude_flags` and the spawner builds one
+  filter per kind — one graph serves every NPC on the map and they do not agree about
+  it.
+
+The filter is applied to the **start point** as well as to the search. Without that, an
+NPC standing at the mouth of a tunnel it may not use snaps onto a point it may not
+occupy, and every path from it fails at the first edge — which reads as a broken graph
+rather than as a filter doing its job.
+
+### Partial paths, because standing still is not an answer
+
+Detour returns its best guess with `DT_PARTIAL_RESULT` rather than nothing. `find_path`
+now does the same on request: the search already tracks the closest node it reached, so
+the partial path is free. `DotNpcPath.partial` carries it to the brain, because
+**following a partial path is correct and believing it ends at the goal is not** — a
+brain that cannot tell the difference repaths to an unreachable target for ever.
+
+The caller's own goal is deliberately *not* appended to a partial path. Appending it
+puts the unreachable position on the end of a path that stops short on purpose, and
+every follower walks the last leg straight through the wall.
+
+### Cover, because a runtime cannot raycast a map it was handed as a graph
+
+Source's `nav_mesh` computes hiding spots at generation time and stores them; that is
+not an optimisation here, it is the only option. Nothing at runtime has the geometry —
+the map was built from constants and shipped as points — so if the generator does not
+write cover down, nothing can ever answer "where can I hide from that".
+
+`DotNpcNavData` keeps cover as its own list rather than as a point attribute, which is
+what Source does and for the same reason: the useful spot is the corner of an area, not
+its middle. Each spot records **the direction the wall lies in**, so the runtime
+question — "is this spot covered from over there" — is a dot product.
+
+`_mark_cover` records one spot per point, not one per obstacle. A point in an inside
+corner has two walls and would otherwise produce two spots in the same place; that is
+one place that is good against two directions, and the query picks the nearest wall to
+the threat anyway. Only `IN_COVER` is generated: sniper spots and exposed ledges need
+long visibility traces over the whole map, and a generator with the geometry in front
+of it can add them — the flags exist so it can.
 
 ## Perception commits, and that is the whole class
 
@@ -199,7 +283,7 @@ find . -name '*.gd' -not -path './.godot/*' -not -path './addons/dot_core/*' | \
 timeout 120 godot --headless --path . res://examples/npc_selftest.tscn
 ```
 
-126 checks. Exits non-zero on failure. Run the `--check-only` pass first: a scene whose
+183 checks. Exits non-zero on failure. Run the `--check-only` pass first: a scene whose
 script fails to parse **hangs** rather than failing.
 
 ## Where a game plugs in
@@ -212,6 +296,10 @@ script fails to parse **hangs** rather than failing.
 | What an NPC can perceive | `DotNpcSenses.switch_ratio` / `commitment_grace`, and the per-definition sight and hearing |
 | What it perceives | `DotNpcSpawner.set_candidates` — id, position, faction, loudness |
 | Where it may stand | `DotNpcNavData`, generated by `DotNpcNavBuilder` from the map's constants |
+| What one area of the map costs to cross | `DotNpcNavFilter.set_area_cost`, per NPC |
+| What one kind of NPC cannot traverse | `DotNpcDef.nav_exclude_flags` |
+| Whether paths are smoothed or may stop short | `DotNpcSpawner.smooth_paths` / `allow_partial_paths` |
+| Where cover is | `DotNpcNavBuilder.generate_cover` / `cover_range`, or `DotNpcNavData.add_cover` from a generator that has the geometry |
 | Where NPCs are added | `DotNpcSpawner.world_ref`, a `DotNodeRef` |
 | What replicates | `DotNpcNetSync.specs()`, resolved by the game's bridge |
 | Who a kill belongs to | the `by` on `damage()` / `report_death()` |
@@ -230,6 +318,12 @@ script fails to parse **hangs** rather than failing.
   NPC needs no graph and should steer directly; nothing stops one.
 - **No crowd avoidance.** Two NPCs pathing to the same point will stand in each other.
   A separation pass belongs with steering, which is `dot-npc-ai`'s.
+- **No dynamic obstacles.** A door that closes does not re-cut the graph. Detour has
+  `dtTileCache` for it; here the honest answer is a `Flag.DOOR` on the points under the
+  door and a filter per NPC, which says who may use it and not whether it is open.
+- **No sniper spots or exposed ledges.** The `Cover` flags are defined and only
+  `IN_COVER` is generated, because the other two need visibility traces over the whole
+  map and the builder only knows boxes.
 - **No 2D.** The nav data, the senses and the brain are all `Vector3`. dot-2d's games
   would want a `Dot2DNpc*` family, exactly as dot-timer is dimension-agnostic and
   dot-fps-controller is not.
