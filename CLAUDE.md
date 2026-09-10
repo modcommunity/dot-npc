@@ -270,6 +270,66 @@ at its first `await`**, so `_test_no_leaked_nodes()` was scheduled to finish aft
 `get_tree().quit()` and never reported. It looked like a passing suite that was quietly
 one check short.
 
+## An NPC is not always a 3D one, and a 2D world is the XZ plane
+
+`DotNpcSpawner.spawn` places a `Node3D` and `spawn_2d` places a `Node2D`. Everything
+either side of that — the catalogue, the population budget, the per-kind cap, the spawn
+interval, the perception, the commitment, the reclaim and the brain — is the same code,
+because none of it is about dimension.
+
+**The mapping is one line: a 2D point `(x, y)` is `Vector3(x, 0, y)`.** That is what lets
+the rest stay unchanged. `DotNpcSenses` compares 3D distances, `DotNpcAiSteering` returns
+3D directions, and `DotNpcNavData` is a graph of 3D points — all of which are exactly
+right on a plane where one component never moves, and all of which would have to be
+rewritten for a `Vector2`. `DotNpcInstance.to_plane` / `from_plane` are the conversion and
+`position()` answers in the plane for either kind of body, so nothing downstream has to
+know which it is looking at.
+
+`DotNpcInstance.node` is therefore typed **`Node`**. `position()`, `facing()` and
+`DotNpcBrain.steer_toward` / `face` / `halt` all branch on the body: a `RigidBody2D` gets
+a velocity, a `CharacterBody2D` gets `move_and_slide`, and a plain `Node2D` is moved.
+There is no gravity in the 2D branch, because a top-down world has none.
+
+**A 2D definition should set `require_line_of_sight = false`.** There is no 3D physics
+world to cast through; `_has_line_of_sight` answers "clear" rather than blinding every NPC
+in the game, and saying so in the definition makes it a decision rather than a fallback
+nobody noticed. A 2D game that wants occlusion does the test itself, which is what the
+flag has always been for.
+
+**`two_dimensional` is one flag rather than a 2D twin of everything that takes a point.**
+It is set once beside `authoritative`, because a spawner serves one world and a world has
+one dimension. `spawn_group` reads it — a group is a ring of offsets and a count, and a
+second copy of the ring arithmetic is a second place the deterministic layout could drift
+— and so does `DotNpcDirector`, which is otherwise the one place a 2D game would have had
+to fork an addon to change a single call. `spawn` and `spawn_2d` stay separate and are
+*not* switched by it: a caller holding a `Vector3` and one holding a `Vector2` are
+different callers, and a signature that took either would take anything.
+
+**Asking for the wrong dimension is refused without leaking.** A 3D NPC through `spawn_2d`
+and a 2D one through `spawn` both return null, and the instantiated scene is freed — a
+scene built and then rejected is a leaked node nothing reports. The suite checks the child
+count either side of both refusals.
+
+## `engaged_at` and `target_since` are different questions
+
+Both are simulated seconds and both are about a target, and they answer opposite things:
+
+| | |
+| --- | --- |
+| `engaged_at` | **Refreshed on every pass in which the target is perceived.** "Is this NPC still busy?" — what `DotNpcLimits.reclaim_grace` is measured from. |
+| `target_since` | **Set when `target_id` changes, and not while it is held.** "How long has it known about this one?" — what a reaction time is measured from. |
+
+`target_since` exists because dot-npc-ai measured a reaction time against `engaged_at` and
+therefore never finished reacting: `now - engaged_at` is approximately zero on every tick
+an NPC can see somebody, so `has_reacted()` was false for ever and every branch behind it
+never ran. Nothing errored — a bot that never acts on what it sees looks like a bot that is
+bad rather than like one that is broken.
+
+The subtle half is the case that looks like a new commitment and is not: **re-perceiving
+the same target after a gap**. `update_target` only moves `target_since` when the id
+actually changes, because restarting the clock there is an NPC that never finishes reacting
+to somebody who keeps stepping behind a pillar.
+
 ## Validating
 
 ```bash
@@ -283,7 +343,7 @@ find . -name '*.gd' -not -path './.godot/*' -not -path './addons/dot_core/*' | \
 timeout 120 godot --headless --path . res://examples/npc_selftest.tscn
 ```
 
-183 checks. Exits non-zero on failure. Run the `--check-only` pass first: a scene whose
+203 checks. Exits non-zero on failure. Run the `--check-only` pass first: a scene whose
 script fails to parse **hangs** rather than failing.
 
 ## Where a game plugs in
@@ -291,6 +351,7 @@ script fails to parse **hangs** rather than failing.
 | To change | Where |
 | --- | --- |
 | What an NPC is | `DotNpcDef` in a `DotNpcCatalogue` |
+| An NPC in a 2D world | `DotNpcSpawner.spawn_2d`, plus `two_dimensional`. See game-hungario |
 | How one decides | `DotNpcBrain` subclass, named by path in the definition |
 | How many there may be | `DotNpcLimits`, layered like every `DotConfig` |
 | What an NPC can perceive | `DotNpcSenses.switch_ratio` / `commitment_grace`, and the per-definition sight and hearing |

@@ -159,14 +159,34 @@ func steer_toward(to: Vector3, speed: float, delta: float) -> void:
 	if npc == null or not npc.is_alive():
 		return
 
-	var body := npc.node
-	var direction := to - body.global_position
+	var direction := to - npc.position()
 	direction.y = 0.0
 
 	if direction.length() < 0.001:
 		return
 
 	direction = direction.normalized()
+
+	# A 2D body. The plane is XZ — see [member DotNpcInstance.node] — so a direction's
+	# `z` is the 2D `y`, and nothing else about this function applies: there is no
+	# gravity to add, no floor to be on, and no basis to rotate.
+	if npc.node is Node2D:
+		var flat := DotNpcInstance.from_plane(direction)
+		var body_2d := npc.node as Node2D
+
+		if body_2d is RigidBody2D:
+			(body_2d as RigidBody2D).linear_velocity = flat * speed
+		elif body_2d is CharacterBody2D:
+			var character_2d := body_2d as CharacterBody2D
+			character_2d.velocity = flat * speed
+			character_2d.move_and_slide()
+		else:
+			body_2d.global_position += flat * speed * delta
+
+		body_2d.global_rotation = flat.angle()
+		return
+
+	var body := npc.node as Node3D
 
 	if body is CharacterBody3D:
 		var character := body as CharacterBody3D
@@ -206,7 +226,11 @@ func face(direction: Vector3) -> void:
 	if flat.length() < 0.001:
 		return
 
-	var body := npc.node
+	if npc.node is Node2D:
+		(npc.node as Node2D).global_rotation = DotNpcInstance.from_plane(flat).angle()
+		return
+
+	var body := npc.node as Node3D
 	# `look_at` refuses a target equal to the node's own position and prints an error;
 	# the flat length check above is what keeps that off a server's log once a tick per
 	# NPC, which is the sort of thing that turns a log into noise nobody reads.
@@ -220,7 +244,11 @@ func halt() -> void:
 
 	var body := npc.node
 
-	if body is CharacterBody3D:
+	if body is RigidBody2D:
+		(body as RigidBody2D).linear_velocity = Vector2.ZERO
+	elif body is CharacterBody2D:
+		(body as CharacterBody2D).velocity = Vector2.ZERO
+	elif body is CharacterBody3D:
 		var character := body as CharacterBody3D
 		character.velocity.x = 0.0
 		character.velocity.z = 0.0

@@ -97,7 +97,15 @@ func perceives(npc: DotNpcInstance, cand: Candidate) -> bool:
 
 
 func _has_line_of_sight(npc: DotNpcInstance, cand: Candidate) -> bool:
-	var world := npc.node.get_world_3d()
+	if not (npc.node is Node3D):
+		# [b]A 2D NPC has no 3D physics world to cast through, and answering "blocked"
+		# would blind it permanently.[/b] A 2D game that wants occlusion sets
+		# `line_of_sight` false on the definition and does the test itself, which is what
+		# the flag is for; what must not happen is this returning false and every NPC in
+		# the game standing still with nothing in the log.
+		return true
+
+	var world := (npc.node as Node3D).get_world_3d()
 
 	if world == null:
 		# No physics world means no walls to be blocked by. Returning false here would
@@ -167,6 +175,7 @@ func update_target(npc: DotNpcInstance, candidates: Array, now: float,
 		if best != null and best.id != committed.id \
 				and best_distance < committed_distance * switch_ratio:
 			npc.target_id = best.id
+			npc.target_since = now
 			return npc.target_id
 
 		return npc.target_id
@@ -176,6 +185,14 @@ func update_target(npc: DotNpcInstance, candidates: Array, now: float,
 		# expires — but a perceived rival ends it immediately, because an NPC that
 		# ignored the player hitting it to chase one that left is worse than either.
 		if best != null:
+			# A different rival, so the commitment is new — and a reaction time has to
+			# start again. Guarded on the id rather than assigned unconditionally,
+			# because re-perceiving the SAME target after a gap is not a new commitment
+			# and restarting the clock there would be an NPC that never finishes reacting
+			# to somebody who keeps stepping behind a pillar.
+			if npc.target_id != best.id:
+				npc.target_since = now
+
 			npc.target_id = best.id
 			npc.target_seen_at = now
 			npc.engaged_at = now
@@ -188,9 +205,11 @@ func update_target(npc: DotNpcInstance, candidates: Array, now: float,
 		return &""
 
 	if best != null:
+		# The first commitment: nothing was held, and something is now.
 		npc.target_id = best.id
 		npc.target_seen_at = now
 		npc.engaged_at = now
+		npc.target_since = now
 
 	return npc.target_id
 

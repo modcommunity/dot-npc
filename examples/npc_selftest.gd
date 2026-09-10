@@ -15,6 +15,7 @@ extends Node
 ## while leaking bodies.
 
 const BODY := "res://fixtures/npc_body.tscn"
+const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 
 var _passed := 0
@@ -50,7 +51,9 @@ func _run() -> void:
 	_test_senses_basics()
 	_test_senses_commitment()
 	_test_senses_grace()
+	_test_target_since()
 	_test_spawning()
+	_test_spawning_2d()
 	_test_authority()
 	_test_world_budget()
 	_test_per_kind_cap()
@@ -118,6 +121,23 @@ func _catalogue() -> DotNpcCatalogue:
 	critter.max_health = 10.0
 	critter.require_line_of_sight = false
 	cat.add(critter)
+
+	# A 2D NPC, in the same catalogue as the 3D ones. A [DotNpcDef] deliberately says
+	# nothing about dimension, so a catalogue holding both is a legitimate thing for a
+	# game with a 2D world to have, and the spawner has to pick the right entry point
+	# rather than infer one.
+	var swarmer := DotNpcDef.make(&"swarmer", BODY_2D)
+	swarmer.brain_script_path = BRAIN
+	swarmer.category = &"swarm"
+	swarmer.max_health = 40.0
+	swarmer.sight_range = 300.0
+	# [b]Off, and it has to be for a 2D NPC.[/b] There is no 3D physics world to cast
+	# through, and [method DotNpcSenses._has_line_of_sight] answers "clear" rather than
+	# blinding it — but saying so in the definition is what makes that a decision rather
+	# than a fallback nobody noticed.
+	swarmer.require_line_of_sight = false
+	swarmer.meta = {"speed": 90.0}
+	cat.add(swarmer)
 
 	var broken := DotNpcDef.make(&"broken", BODY)
 	broken.brain_script_path = "res://fixtures/not_a_brain.gd"
@@ -209,12 +229,12 @@ func _test_catalogue() -> void:
 	print("catalogue")
 
 	var cat := _catalogue()
-	_check(cat.size() == 4, "a catalogue holds what was added", "%d" % cat.size())
+	_check(cat.size() == 5, "a catalogue holds what was added", "%d" % cat.size())
 	_check(cat.get_npc(&"walker") != null, "and finds by id")
 	_check(cat.get_npc(&"nothing") == null, "and answers null for what is not there")
 	var categories := cat.categories()
 	_check(
-		categories.size() == 3 and categories[0] == "npc" and categories[2] == "zombie",
+		categories.size() == 4 and categories[0] == "npc" and categories[3] == "zombie",
 		"categories are the enabled ones, sorted",
 		str(categories)
 	)
@@ -834,6 +854,54 @@ func _test_senses_commitment() -> void:
 	)
 
 
+## `target_since` moves when a commitment does, and not while one is held.
+##
+## [b]This is the field dot-npc-ai's reaction time is measured against, and the reason it
+## exists.[/b] `engaged_at` is refreshed on every pass in which a target is perceived —
+## which is right for a reclaim and fatal for a reaction: a timer measured against it can
+## never elapse for an NPC that can currently see somebody, so every branch behind such a
+## gate never runs. Nothing errors; the bot just never acts.
+func _test_target_since() -> void:
+	print("commitment time")
+
+	var senses := DotNpcSenses.new()
+	var npc := _loose_npc(_catalogue().get_npc(&"walker"))
+
+	var one := _candidate(&"one", Vector3(0, 0, -6))
+	senses.update_target(npc, [one], 10.0, 8)
+
+	_check(npc.target_id == &"one", "an NPC commits to somebody")
+	_check(
+		is_equal_approx(npc.target_since, 10.0),
+		"and records WHEN it committed (%.1f)" % npc.target_since
+	)
+
+	# Ten more seconds of seeing exactly the same person.
+	for step in range(10):
+		senses.update_target(npc, [one], 11.0 + float(step), 8)
+
+	_check(
+		is_equal_approx(npc.target_since, 10.0),
+		"which does not move while it keeps seeing them (%.1f)" % npc.target_since,
+		"a reaction time measured against a field that moves every tick never elapses"
+	)
+	_check(
+		npc.engaged_at > npc.target_since,
+		"while `engaged_at` does, because that is what a reclaim asks about",
+		"engaged %.1f, since %.1f" % [npc.engaged_at, npc.target_since]
+	)
+
+	# Somebody much closer. A new commitment, so the clock starts again.
+	var two := _candidate(&"two", Vector3(0, 0, -1))
+	senses.update_target(npc, [one, two], 30.0, 8)
+
+	_check(npc.target_id == &"two", "a much nearer rival takes the commitment")
+	_check(
+		is_equal_approx(npc.target_since, 30.0),
+		"and the clock starts again (%.1f)" % npc.target_since
+	)
+
+
 func _test_senses_grace() -> void:
 	print("senses: the grace period")
 
@@ -896,6 +964,116 @@ func _test_spawning() -> void:
 	_check(positions.size() == 5, "and no two of them are in the same place")
 
 	spawner.queue_free()
+
+
+## The same spawner, into a 2D world.
+##
+## [b]The point is that everything except the placement is shared.[/b] The catalogue, the
+## budget, the per-kind cap, the perception, the commitment, the reclaim and the brain are
+## the same code — so what is worth checking is the mapping onto the plane, and the one
+## thing a mixed catalogue makes possible: asking for a 2D NPC through the 3D entry point,
+## and the reverse. Both must be refused rather than half-built, because a scene that is
+## instantiated and then rejected is a leaked node nothing reports.
+func _test_spawning_2d() -> void:
+	print("spawning in 2D")
+
+	var world_2d := Node2D.new()
+	_world.add_child(world_2d)
+
+	var spawner := DotNpcSpawner.new()
+	spawner.catalogue = _catalogue()
+	spawner.limits = _limits()
+	spawner.authoritative = true
+	spawner.two_dimensional = true
+	spawner.world_ref = DotNodeRef.of_path(^"..")
+	world_2d.add_child(spawner)
+
+	var swarmer := spawner.spawn_2d(&"swarmer", Vector2(120.0, -40.0))
+
+	_check(swarmer != null, "a 2D NPC spawns")
+	_check(swarmer != null and swarmer.is_alive(), "and its node is in the tree")
+	_check(swarmer != null and swarmer.is_2d(), "and it knows it is 2D")
+	_check(
+		swarmer != null and swarmer.position_2d().is_equal_approx(Vector2(120.0, -40.0)),
+		"where it was asked for",
+		str(swarmer.position_2d()) if swarmer != null else "null"
+	)
+
+	# [b]The plane is XZ, and this is the check that says so.[/b] Everything inside this
+	# addon measures a 3D distance — the senses, the steering, the navigation — and on a
+	# plane where one component never moves that IS the 2D distance. Get the mapping
+	# wrong and a sight range of 300 is a sight range of nothing, silently.
+	_check(
+		swarmer != null and swarmer.position().is_equal_approx(Vector3(120.0, 0.0, -40.0)),
+		"and reads back in the XZ plane the senses measure in",
+		str(swarmer.position()) if swarmer != null else "null"
+	)
+	_check(
+		DotNpcInstance.from_plane(DotNpcInstance.to_plane(Vector2(3.0, -7.0)))
+			== Vector2(3.0, -7.0),
+		"the mapping round-trips"
+	)
+
+	# Perception, which is the half a 2D game is actually here for.
+	spawner.set_candidates([
+		_candidate(&"player_near", DotNpcInstance.to_plane(Vector2(160.0, -40.0))),
+		_candidate(&"player_far", DotNpcInstance.to_plane(Vector2(4000.0, -40.0))),
+	])
+	# Several ticks, because perception is staggered across `sense_period_ticks` — ninety
+	# NPCs sensing on the same tick is a spike and the same work spread over four is not.
+	# A test that ticked once would be asserting which slot this NPC landed in.
+	for _sense in range(8):
+		spawner.tick(1.0 / 60.0)
+
+	_check(
+		swarmer.target_id == &"player_near",
+		"it commits to the nearer of two candidates (%s)" % String(swarmer.target_id)
+	)
+
+	# And it moves. `steer_toward` has no 2D branch worth the name if the body never goes
+	# anywhere, and a brain that silently does nothing is dot-npc's own most repeated bug.
+	var before := swarmer.position_2d()
+
+	for _step in range(20):
+		spawner.tick(1.0 / 60.0)
+
+	_check(
+		swarmer.position_2d().distance_to(before) > 1.0,
+		"and walks toward it (%.1f units)" % swarmer.position_2d().distance_to(before)
+	)
+
+	var children := world_2d.get_child_count()
+
+	_check(
+		spawner.spawn_2d(&"walker", Vector2.ZERO) == null,
+		"a 3D NPC asked for in 2D is refused"
+	)
+	_check(
+		spawner.spawn(&"swarmer", Vector3.ZERO) == null,
+		"and a 2D NPC asked for in 3D"
+	)
+	_check(
+		world_2d.get_child_count() == children,
+		"leaving nothing behind either time",
+		"%d children, was %d" % [world_2d.get_child_count(), children]
+	)
+
+	# A wave. `spawn_2d_group` is one flag rather than a second copy of the ring
+	# arithmetic, because a second copy is a second place the deterministic layout drifts.
+	var wave := spawner.spawn_group(&"swarmer", Vector3(400.0, 0.0, 400.0), 4, 30.0)
+
+	_check(wave.size() == 4, "a group spawns four (%d)" % wave.size())
+	_check(
+		wave.size() == 4 and wave[0].is_2d() and wave[3].is_2d(),
+		"and every one of them is 2D"
+	)
+	_check(
+		wave.size() == 4
+			and wave[0].position_2d().distance_to(wave[2].position_2d()) > 30.0,
+		"spread around the point rather than stacked on it"
+	)
+
+	world_2d.queue_free()
 
 
 func _test_authority() -> void:

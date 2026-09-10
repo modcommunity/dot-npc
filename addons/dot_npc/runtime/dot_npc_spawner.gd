@@ -81,6 +81,20 @@ const REASON_ADMIN := &"admin"
 ## modified client that fills the world.
 @export var authoritative: bool = false
 
+## Whether this spawner serves a 2D world.
+##
+## [b]One flag rather than a 2D twin of everything that takes a point.[/b] A host sets it
+## once beside `authoritative`, because a spawner serves one world and a world has one
+## dimension — and everything that holds a point already holds it in this addon's plane
+## (see [member DotNpcInstance.node]), so the only question left is which spawn to route
+## it through. [method spawn_group] reads it, and so does [DotNpcDirector], which is
+## otherwise the one place a 2D game would have had to fork.
+##
+## [method spawn] and [method spawn_2d] stay separate and are NOT switched by this: a
+## caller holding a [Vector3] and a caller holding a [Vector2] are different callers, and
+## a signature that took either would be a signature that takes anything.
+@export var two_dimensional: bool = false
+
 @export_group("Navigation")
 
 ## Remove the corners the grid put in a path that the world does not have.
@@ -406,52 +420,14 @@ func spawn(
 	owner_id: StringName = &"",
 	orientation: Basis = Basis.IDENTITY
 ) -> DotNpcInstance:
-	if not authoritative:
-		_refuse(owner_id, npc_id, "This client may not spawn NPCs.")
+	var prepared := _prepare(npc_id, at, owner_id)
+
+	if prepared.is_empty():
 		return null
 
-	if catalogue == null:
-		_refuse(owner_id, npc_id, "This server has no NPC catalogue.")
-		return null
-
-	var def := catalogue.get_npc(npc_id)
-
-	if def == null or not def.enabled:
-		_refuse(owner_id, npc_id, "No such NPC.")
-		return null
-
-	var allowed := may_spawn(def, owner_id)
-
-	if not allowed.ok:
-		_refuse(owner_id, npc_id, allowed.error.message)
-		return null
-
-	var placement := place(at)
-
-	if not placement.ok:
-		_refuse(owner_id, npc_id, placement.error.message)
-		return null
-
-	if not ResourceLoader.exists(def.scene_path):
-		# Distinguished from "no such NPC" because the two need different fixes: this
-		# one is a pack that is not mounted, and telling an operator "no such NPC"
-		# sends them to edit a catalogue that is already right.
-		_refuse(owner_id, npc_id, "That NPC's content is not loaded on this server.")
-		return null
-
-	var scene: Resource = load(def.scene_path)
-
-	if not (scene is PackedScene):
-		_refuse(owner_id, npc_id, "That NPC's scene is not a PackedScene.")
-		return null
-
-	var resolved := _resolve_world()
-
-	if not resolved.ok:
-		_refuse(owner_id, npc_id, resolved.error.message)
-		return null
-
-	var node := (scene as PackedScene).instantiate()
+	var def: DotNpcDef = prepared[0]
+	var node: Node = prepared[1]
+	var placed: Vector3 = prepared[2]
 
 	if not (node is Node3D):
 		node.queue_free()
@@ -459,7 +435,109 @@ func spawn(
 		return null
 
 	var body := node as Node3D
-	body.global_transform = Transform3D(orientation, placement.value)
+	body.global_transform = Transform3D(orientation, placed)
+
+	return _adopt(def, body, owner_id)
+
+
+## The same spawn, into a 2D world.
+##
+## [b]A separate entry point rather than a widened signature[/b], for
+## [method DotPropSpawner.spawn_2d]'s reason: every existing caller passes a [Vector3] and
+## a [Basis], and a 2D one holds neither.
+##
+## [b]The plane is XZ.[/b] `at` is `(x, y)` on screen and becomes `(x, 0, y)` everywhere
+## inside this addon — see [member DotNpcInstance.node]. That is what lets the senses, the
+## navigation, the steering and the director run unchanged: every one of them measures a
+## 3D distance, and a 3D distance on a plane where one component never moves IS the 2D one.
+##
+## A 2D definition should set `line_of_sight` false: there is no 3D physics world to cast
+## through, and [method DotNpcSenses._has_line_of_sight] answers "clear" rather than
+## blinding every NPC in the game.
+func spawn_2d(
+	npc_id: StringName,
+	at: Vector2,
+	owner_id: StringName = &"",
+	rotation: float = 0.0
+) -> DotNpcInstance:
+	var prepared := _prepare(npc_id, DotNpcInstance.to_plane(at), owner_id)
+
+	if prepared.is_empty():
+		return null
+
+	var def: DotNpcDef = prepared[0]
+	var node: Node = prepared[1]
+	var placed: Vector3 = prepared[2]
+
+	if not (node is Node2D):
+		node.queue_free()
+		_refuse(owner_id, npc_id, "That NPC's scene is not a Node2D.")
+		return null
+
+	var body := node as Node2D
+	body.position = DotNpcInstance.from_plane(placed)
+	body.rotation = rotation
+
+	return _adopt(def, body, owner_id)
+
+
+## Everything both spawns do before the node exists: the checks, the placement, and the
+## instantiation. Returns `[def, node, placed_position]` or an empty array on a refusal.
+func _prepare(npc_id: StringName, at: Vector3, owner_id: StringName) -> Array:
+	if not authoritative:
+		_refuse(owner_id, npc_id, "This client may not spawn NPCs.")
+		return []
+
+	if catalogue == null:
+		_refuse(owner_id, npc_id, "This server has no NPC catalogue.")
+		return []
+
+	var def := catalogue.get_npc(npc_id)
+
+	if def == null or not def.enabled:
+		_refuse(owner_id, npc_id, "No such NPC.")
+		return []
+
+	var allowed := may_spawn(def, owner_id)
+
+	if not allowed.ok:
+		_refuse(owner_id, npc_id, allowed.error.message)
+		return []
+
+	var placement := place(at)
+
+	if not placement.ok:
+		_refuse(owner_id, npc_id, placement.error.message)
+		return []
+
+	if not ResourceLoader.exists(def.scene_path):
+		# Distinguished from "no such NPC" because the two need different fixes: this
+		# one is a pack that is not mounted, and telling an operator "no such NPC"
+		# sends them to edit a catalogue that is already right.
+		_refuse(owner_id, npc_id, "That NPC's content is not loaded on this server.")
+		return []
+
+	var scene: Resource = load(def.scene_path)
+
+	if not (scene is PackedScene):
+		_refuse(owner_id, npc_id, "That NPC's scene is not a PackedScene.")
+		return []
+
+	return [def, (scene as PackedScene).instantiate(), placement.value]
+
+
+## Puts a placed node into the world and into the books, and gives it its brain.
+##
+## The world is resolved here rather than in [method _prepare], after the node exists —
+## the other order leaks the instantiated scene on a world that cannot be resolved, which
+## is a leak nothing reports because the spawn "correctly" refused.
+func _adopt(def: DotNpcDef, body: Node, owner_id: StringName) -> DotNpcInstance:
+	var resolved := _resolve_world()
+
+	if not resolved.ok:
+		body.queue_free()
+		_refuse(owner_id, def.id, resolved.error.message)
+		return null
 
 	(resolved.value as Node).add_child(body)
 
@@ -521,7 +599,8 @@ func spawn_group(
 		# player could see.
 		var angle := TAU * float(i) / float(maxi(wanted, 1))
 		var offset := Vector3(cos(angle), 0.0, sin(angle)) * spread
-		var made := spawn(npc_id, at + offset, owner_id)
+		var made := spawn_2d(npc_id, DotNpcInstance.from_plane(at + offset), owner_id) \
+			if two_dimensional else spawn(npc_id, at + offset, owner_id)
 
 		if made != null:
 			out.append(made)
