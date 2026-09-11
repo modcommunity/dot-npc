@@ -12,25 +12,17 @@ This asset, along with all the others, was built initially with **Claude Code** 
 I intend on reviewing code, testing, and editing documentation regularly. If you're interested in helping out, please let me know!
 
 ## An NPC Layer
-**An NPC layer for Godot 4** — a catalogue of definitions, a population budget that
-keeps a server alive, perception that commits to a target rather than flickering
-between two, and navigation generated from the constants a code-built map was drawn
-from.
+**An NPC layer for Godot 4** — a catalogue of definitions, a population budget that keeps a server alive, perception that commits to a target rather than flickering between two, and navigation generated from the constants a code-built map was drawn from.
 
 Depends on **dot-core and nothing else**.
 
 ## Server-authoritative, and not predicted
 
-An NPC's position is the output of a pathfinder, a steering pass and — for a rigid-body
-NPC — a physics solver, none of which is reproducible across machines. A predicted NPC
-is a constantly corrected NPC. The server owns every NPC; a client draws what it is
-told, interpolated a few tens of milliseconds behind.
+An NPC's position is the output of a pathfinder, a steering pass and — for a rigid-body NPC — a physics solver, none of which is reproducible across machines. A predicted NPC is a constantly corrected NPC. The server owns every NPC; a client draws what it is told, interpolated a few tens of milliseconds behind.
 
 ## Installing
 
-Copy `addons/dot_npc/` and [`dot-core`](https://github.com/modcommunity/dot-core)'s
-`addons/dot_core/` into your project, and enable dot-npc in
-*Project → Project Settings → Plugins*.
+Copy `addons/dot_npc/` and [`dot-core`](https://github.com/modcommunity/dot-core)'s `addons/dot_core/` into your project, and enable dot-npc in *Project → Project Settings → Plugins*.
 
 ## Five minutes
 
@@ -76,17 +68,11 @@ func _npc_think(delta: float) -> void:
 
 ## Navigation
 
-Every map in this family is built in code from constants, so there is no authored
-geometry to bake a `NavigationMesh` from. `DotNpcNavBuilder` generates a point graph
-from the same constants the geometry was built from, and `DotNpcNavData.source_digest`
-is what a suite compares to catch a map that moved and a graph that did not.
+Every map in this family is built in code from constants, so there is no authored geometry to bake a `NavigationMesh` from. `DotNpcNavBuilder` generates a point graph from the same constants the geometry was built from, and `DotNpcNavData.source_digest` is what a suite compares to catch a map that moved and a graph that did not.
 
-A game with authored geometry should use Godot's own `NavigationRegion3D` instead, and
-nothing here stops it: a spawner with no nav data spawns anywhere, and a brain that owns
-a `NavigationAgent3D` paths with that.
+A game with authored geometry should use Godot's own `NavigationRegion3D` instead, and nothing here stops it: a spawner with no nav data spawns anywhere, and a brain that owns a `NavigationAgent3D` paths with that.
 
-What the graph does beyond A*, all of it read out of Recast & Detour and Source's
-`nav_mesh`:
+What the graph does beyond A*, all of it read out of Recast & Detour and twenty years of shipped navigation-mesh practice:
 
 | | |
 | --- | --- |
@@ -107,11 +93,7 @@ var spot := nav.cover_position_from(npc.position(), enemy_position)
 
 ## The family
 
-`dot-npc` is what an NPC **is**. `dot-npc-ai` is how one **decides** — behaviour trees,
-state machines, steering and squads. `dot-npc-ai-director` is the Left 4 Dead director:
-population, pacing and the build-up / peak / fade / relax cycle. Each is a separate
-addon, so a game that wants a catalogue and a budget does not install a decision engine
-it will not use.
+`dot-npc` is what an NPC **is**. `dot-npc-ai` is how one **decides** — behaviour trees, state machines, steering and squads. `dot-npc-ai-director` is the pacing layer: population, and the build-up / peak / fade / relax cycle. Each is a separate addon, so a game that wants a catalogue and a budget does not install a decision engine it will not use.
 
 ## Validating
 
