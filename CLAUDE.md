@@ -387,4 +387,4 @@ script fails to parse **hangs** rather than failing.
   map and the builder only knows boxes.
 - **No 2D.** The nav data, the senses and the brain are all `Vector3`. dot-2d's games
   would want a `Dot2DNpc*` family, exactly as dot-timer is dimension-agnostic and
-  dot-fps-controller is not.
+  dot-player-controller is not.

@@ -12,13 +12,13 @@ This asset, along with all the others, was built initially with **Claude Code** 
 I intend on reviewing code, testing, and editing documentation regularly. If you're interested in helping out, please let me know!
 
 ## An NPC Layer
-**An NPC layer for Godot 4** — a catalogue of definitions, a population budget that keeps a server alive, perception that commits to a target rather than flickering between two, and navigation generated from the constants a code-built map was drawn from.
+**An NPC layer for Godot 4.** It gives you a catalogue of definitions, a population budget that keeps a server alive, perception that commits to a target rather than flickering between two, and navigation generated from the constants a code-built map was drawn from.
 
 Depends on **dot-core and nothing else**.
 
 ## Server-authoritative, and not predicted
 
-An NPC's position is the output of a pathfinder, a steering pass and — for a rigid-body NPC — a physics solver, none of which is reproducible across machines. A predicted NPC is a constantly corrected NPC. The server owns every NPC; a client draws what it is told, interpolated a few tens of milliseconds behind.
+An NPC's position is the output of a pathfinder, a steering pass and, for a rigid-body NPC, a physics solver, none of which is reproducible across machines. A predicted NPC is a constantly corrected NPC. The server owns every NPC; a client draws what it is told, interpolated a few tens of milliseconds behind.
 
 ## Installing
 
@@ -77,9 +77,9 @@ What the graph does beyond A*, all of it read out of Recast & Detour and twenty 
 | | |
 | --- | --- |
 | **Smoothing** | A two-metre grid can only turn eight ways, so a path across an open room is a visible staircase. `find_smooth_path` removes the corners the world does not have. On by default. |
-| **Areas** | A point can be water, a hazard, a doorway. `DotNpcNavFilter` gives an area a cost, so an NPC goes round the pond — and wades when going round is worse. |
+| **Areas** | A point can be water, a hazard, a doorway. `DotNpcNavFilter` gives an area a cost, so an NPC goes round the pond, and wades when going round is worse. |
 | **Flags** | Crouch, jump, avoid, door. `DotNpcDef.nav_exclude_flags` says what one kind of NPC cannot use, because a crouch tunnel is a fact about the map and whether it is a way through is a fact about the NPC. |
-| **Partial paths** | An unreachable goal gives the best path toward it rather than nothing, and `DotNpcPath.partial` says so — following one is correct, believing it arrives is not. |
+| **Partial paths** | An unreachable goal gives the best path toward it rather than nothing, and `DotNpcPath.partial` says so. Following one is correct; believing it arrives is not. |
 | **Cover** | The generator records where the walls are and which way they face, so a brain can ask "where do I hide from that" on a map it only has a graph of. |
 
 ```gdscript
@@ -93,7 +93,7 @@ var spot := nav.cover_position_from(npc.position(), enemy_position)
 
 ## The family
 
-`dot-npc` is what an NPC **is**. `dot-npc-ai` is how one **decides** — behaviour trees, state machines, steering and squads. `dot-npc-ai-director` is the pacing layer: population, and the build-up / peak / fade / relax cycle. Each is a separate addon, so a game that wants a catalogue and a budget does not install a decision engine it will not use.
+`dot-npc` is what an NPC **is**. `dot-npc-ai` is how one **decides**, through behaviour trees, state machines, steering and squads. `dot-npc-ai-director` is the pacing layer: population, and the build-up / peak / fade / relax cycle. Each is a separate addon, so a game that wants a catalogue and a budget does not install a decision engine it will not use.
 
 ## Validating
 

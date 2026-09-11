@@ -56,9 +56,10 @@ const AREA_DOOR := 3
 
 ## Per-point properties, as bits.
 ##
-## Source's nav mesh attributes, minus the ones that are Counter-Strike's. They are
-## on the point rather than on the edge because a code-built map knows what a floor
-## tile is; an edge between two of them inherits the worse of the two.
+## The nav-mesh attributes twenty years of shipped practice settled on, minus the ones
+## that belong to one round-based shooter. They are on the point rather than on the
+## edge because a code-built map knows what a floor tile is; an edge between two of
+## them inherits the worse of the two.
 enum Flag {
 	NONE = 0,
 	CROUCH = 1 << 0,   ## Must crouch to be here.
