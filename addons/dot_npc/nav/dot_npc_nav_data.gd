@@ -35,7 +35,8 @@ extends Resource
 ## and nothing in dot-npc stops it: a [DotNpcSpawner] with no nav data spawns anywhere
 ## and a brain that owns an agent paths with that.
 
-const CHANNEL := "npc.nav"
+# No log channel: the document the exporter writes. validate() returns a DotResult and
+# the spawner that adopts it logs the outcome with the map in hand.
 
 ## Bumped when the on-disk shape changes.
 ##

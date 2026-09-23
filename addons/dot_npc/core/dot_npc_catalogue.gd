@@ -188,6 +188,7 @@ func to_dictionary() -> Dictionary:
 ## the operator has no NPCs at all rather than thirty-nine.
 static func from_dictionary(data: Dictionary, rejected: PackedStringArray = PackedStringArray()) -> DotNpcCatalogue:
 	var cat := DotNpcCatalogue.new()
+	var rejected_before := rejected.size()
 
 	var raw: Variant = data.get("npcs", [])
 
@@ -202,6 +203,16 @@ static func from_dictionary(data: Dictionary, rejected: PackedStringArray = Pack
 
 			if not added.ok:
 				rejected.append(added.error.message if added.error != null else "invalid")
+
+	# Said here, whatever the caller does with [param rejected], because the person who
+	# can fix entry forty is the operator with the text editor, and a dropped NPC
+	# otherwise surfaces as "that NPC does not exist" from a spawn much later. WARN, and
+	# the same line DotPropCatalogue and DotMapCatalogue write for the same reason.
+	if rejected.size() > rejected_before:
+		DotLog.warn(CHANNEL, "some npc entries were dropped", {
+			"count": rejected.size() - rejected_before,
+			"entries": ", ".join(rejected.slice(rejected_before)),
+		})
 
 	var meta_value: Variant = data.get("meta", {})
 	cat.meta = (

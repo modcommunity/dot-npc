@@ -202,11 +202,25 @@ func set_nav_data(data: DotNpcNavData) -> DotResult:
 	var graph := DotNpcNavGraph.new()
 	var built := graph.rebuild(data)
 
+	# Logged here because this is where a nav file meets the running server, whoever
+	# loaded it. Refused is WARN: NPCs fall back to walking straight at their goals,
+	# which is survivable and wants somebody to regenerate the file. Adopted is INFO,
+	# once per map, because "NPCs walk through walls" is first answered by whether
+	# navigation was loaded for this map at all.
 	if not built.ok:
 		nav = null
+		DotLog.warn(CHANNEL, "navigation refused; npcs will walk straight at goals", {
+			"map": String(data.map_id), "why": built.error.message,
+		})
 		return built.wrap("Navigation for this map was refused.")
 
 	nav = graph
+
+	DotLog.info(CHANNEL, "navigation adopted", {
+		"map": String(data.map_id),
+		"points": data.point_count(),
+		"edges": data.edge_count(),
+	})
 
 	return DotResult.success(nav)
 

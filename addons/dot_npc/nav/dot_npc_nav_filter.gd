@@ -28,7 +28,7 @@ extends RefCounted
 ## every NPC on the map and they do not agree about it — which is why this is a
 ## separate object a caller hands in, rather than fields on [DotNpcNavData].
 
-const CHANNEL := "npc.nav"
+# No log channel: a value object of costs and flags. It cannot fail against anything.
 
 ## Areas an id may take. Detour uses 64; sixteen is more than a code-built map has
 ## ever needed and keeps the cost table a cache line.

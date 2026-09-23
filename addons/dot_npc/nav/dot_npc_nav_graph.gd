@@ -21,7 +21,9 @@ extends RefCounted
 ## microseconds; rebuilding the adjacency list from a flat [PackedInt32Array] on every
 ## query is not, and ninety NPCs repathing is exactly when it would be paid.
 
-const CHANNEL := "npc.nav"
+# No log channel: a search. A path that is not found is an answer, asked for several NPCs
+# a second, and the caller decides what it means; adopting or refusing the graph for a
+# map is logged by DotNpcSpawner.set_nav_data, which is where it enters the process.
 
 var data: DotNpcNavData = null
 
