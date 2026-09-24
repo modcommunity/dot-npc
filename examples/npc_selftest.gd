@@ -20,9 +20,17 @@ const BRAIN := "res://fixtures/walker_brain.gd"
 
 const CHECKS := 203
 
+## Sections entered against sections that ran to their last line, and against this. A
+## runtime error inside a section aborts that function and nothing says so; a section that
+## bailed out early after a failed guard is counted as not finished on purpose. The CHECKS
+## total is the other half — see docs/testing.md.
+const SECTIONS := 29
+
 var _passed := 0
 var _failed := 0
 var _failures := PackedStringArray()
+var _entered := 0
+var _completed := 0
 
 var _world: Node3D = null
 
@@ -79,6 +87,13 @@ func _run() -> void:
 	for line in _failures:
 		print("  FAIL  %s" % line)
 
+	print("%d of %d sections ran to their last line" % [_completed, _entered])
+	if _entered != SECTIONS or _completed != _entered:
+		print("ERROR: %d sections entered and %d completed, %d expected. One aborted or was skipped." % [
+			_entered, _completed, SECTIONS
+		])
+		get_tree().quit(1)
+		return
 	# The total the section counter cannot be. A runtime error inside a section aborts
 	# that function, and the counter is satisfied because the section had already
 	# announced itself. See docs/testing.md.
@@ -89,6 +104,16 @@ func _run() -> void:
 		get_tree().quit(1)
 		return
 	get_tree().quit(1 if _failed > 0 else 0)
+
+
+func _section(title: String) -> void:
+	_entered += 1
+	print(title)
+
+
+## A section reached its last line. See [constant SECTIONS].
+func _done() -> void:
+	_completed += 1
 
 
 func _check(ok: bool, what: String, detail: String = "") -> void:
@@ -203,7 +228,7 @@ func _loose_npc(def: DotNpcDef, at: Vector3 = Vector3.ZERO) -> DotNpcInstance:
 # --- Definitions -------------------------------------------------------------
 
 func _test_definitions() -> void:
-	print("definitions")
+	_section("definitions")
 
 	var walker := DotNpcDef.make(&"walker", BODY)
 	_check(walker.validate().ok, "a definition validates")
@@ -234,10 +259,11 @@ func _test_definitions() -> void:
 		"and its meta is copied out, not handed out",
 		"a Dictionary is a reference; this is the aliasing bug dot-timer had five of"
 	)
+	_done()
 
 
 func _test_catalogue() -> void:
-	print("catalogue")
+	_section("catalogue")
 
 	var cat := _catalogue()
 	_check(cat.size() == 5, "a catalogue holds what was added", "%d" % cat.size())
@@ -265,10 +291,11 @@ func _test_catalogue() -> void:
 		"one bad entry does not condemn the file",
 		"%d kept, %d rejected" % [reloaded.size(), rejected.size()]
 	)
+	_done()
 
 
 func _test_limits() -> void:
-	print("limits")
+	_section("limits")
 
 	var limits := DotNpcLimits.new()
 	_check(limits.validate().ok, "the defaults are usable")
@@ -287,12 +314,13 @@ func _test_limits() -> void:
 		configured.world_budget == 12,
 		"and it is a DotConfig, so a file or a command line can retune it"
 	)
+	_done()
 
 
 # --- Navigation --------------------------------------------------------------
 
 func _test_nav_data() -> void:
-	print("navigation data")
+	_section("navigation data")
 
 	var nav := DotNpcNavData.new()
 	_check(not nav.validate().ok, "empty nav data is refused")
@@ -323,10 +351,11 @@ func _test_nav_data() -> void:
 		round_tripped.point_count() == 2 and round_tripped.edge_count() == 1,
 		"and nav data survives a round trip"
 	)
+	_done()
 
 
 func _test_nav_builder() -> void:
-	print("navigation builder")
+	_section("navigation builder")
 
 	var builder := DotNpcNavBuilder.new()
 	builder.spacing = 2.0
@@ -363,10 +392,11 @@ func _test_nav_builder() -> void:
 		not linked.find_path(Vector3(0, 0, 0), Vector3(0, 6, 0), 2.0).is_empty(),
 		"and a declared link is what joins two storeys"
 	)
+	_done()
 
 
 func _test_nav_graph() -> void:
-	print("navigation graph")
+	_section("navigation graph")
 
 	# A corridor bent round a wall: the straight line is blocked and the path is not.
 	var builder := DotNpcNavBuilder.new()
@@ -411,6 +441,7 @@ func _test_nav_graph() -> void:
 
 	var nowhere := graph.find_path(from, Vector3(500, 0, 500), 3.0)
 	_check(nowhere.is_empty(), "a goal off the graph gives no path at all")
+	_done()
 
 
 # --- Smoothing, filters, partial paths and cover ----------------------------
@@ -446,7 +477,7 @@ func _path_length(path: PackedVector3Array) -> float:
 
 
 func _test_nav_smoothing() -> void:
-	print("navigation smoothing")
+	_section("navigation smoothing")
 
 	# An empty room. Every waypoint between the ends is the grid's, not the world's.
 	var builder := DotNpcNavBuilder.new()
@@ -516,10 +547,11 @@ func _test_nav_smoothing() -> void:
 		graph.smooth_path(two).size() == 2,
 		"a path with nothing to remove comes back unchanged"
 	)
+	_done()
 
 
 func _test_nav_filter() -> void:
-	print("navigation filter")
+	_section("navigation filter")
 
 	# The water strip is added first, because the first floor to claim a grid cell
 	# keeps it — so the ground added afterwards fills in around it.
@@ -623,10 +655,11 @@ func _test_nav_filter() -> void:
 		not DotNpcNavFilter.neutral().duplicate_filter().is_neutral() == false,
 		"a filter can be copied"
 	)
+	_done()
 
 
 func _test_nav_partial() -> void:
-	print("navigation partial paths")
+	_section("navigation partial paths")
 
 	# Two rooms with nothing joining them.
 	var builder := DotNpcNavBuilder.new()
@@ -665,10 +698,11 @@ func _test_nav_partial() -> void:
 	var reachable := graph.find_path(from, Vector3(-8, 0, 4), 3.0, true)
 	_check(not reachable.is_empty(), "a reachable goal is unaffected")
 	_check(not graph.last_partial, "and is not reported as partial")
+	_done()
 
 
 func _test_nav_cover() -> void:
-	print("navigation cover")
+	_section("navigation cover")
 
 	var wall := AABB(Vector3(-1, 0, -10), Vector3(2, 3, 20))
 	var builder := DotNpcNavBuilder.new()
@@ -740,10 +774,11 @@ func _test_nav_cover() -> void:
 		nav.cover_position_from(Vector3(6, 0, 0), Vector3(-9, 0, 0)).x > 0.0,
 		"the position helper answers the same question"
 	)
+	_done()
 
 
 func _test_path() -> void:
-	print("path following")
+	_section("path following")
 
 	var path := DotNpcPath.new()
 	var points := PackedVector3Array([
@@ -777,12 +812,13 @@ func _test_path() -> void:
 		path.needs_repath(9.0, Vector3(8, 0, 0), 1.5, 2.5),
 		"and so does the interval, for a world that changed around a still goal"
 	)
+	_done()
 
 
 # --- Senses ------------------------------------------------------------------
 
 func _test_senses_basics() -> void:
-	print("senses")
+	_section("senses")
 
 	var senses := DotNpcSenses.new()
 	var def := DotNpcDef.make(&"seer", BODY)
@@ -818,10 +854,11 @@ func _test_senses_basics() -> void:
 		not senses.perceives(npc, _candidate(&"z", Vector3(0, 0, -5), &"hostile")),
 		"and its own faction is never a target"
 	)
+	_done()
 
 
 func _test_senses_commitment() -> void:
-	print("senses: commitment")
+	_section("senses: commitment")
 
 	var senses := DotNpcSenses.new()
 	var def := DotNpcDef.make(&"seer", BODY)
@@ -863,6 +900,7 @@ func _test_senses_commitment() -> void:
 		senses.update_target(npc, [near, much_nearer], 5.0) == &"much",
 		"but does switch to something decisively closer"
 	)
+	_done()
 
 
 ## `target_since` moves when a commitment does, and not while one is held.
@@ -873,7 +911,7 @@ func _test_senses_commitment() -> void:
 ## never elapse for an NPC that can currently see somebody, so every branch behind such a
 ## gate never runs. Nothing errors; the bot just never acts.
 func _test_target_since() -> void:
-	print("commitment time")
+	_section("commitment time")
 
 	var senses := DotNpcSenses.new()
 	var npc := _loose_npc(_catalogue().get_npc(&"walker"))
@@ -911,10 +949,11 @@ func _test_target_since() -> void:
 		is_equal_approx(npc.target_since, 30.0),
 		"and the clock starts again (%.1f)" % npc.target_since
 	)
+	_done()
 
 
 func _test_senses_grace() -> void:
-	print("senses: the grace period")
+	_section("senses: the grace period")
 
 	var senses := DotNpcSenses.new()
 	senses.commitment_grace = 3.0
@@ -946,12 +985,13 @@ func _test_senses_grace() -> void:
 		"a perceived rival ends the grace immediately",
 		"ignoring the player hitting it to chase one that left is worse than either"
 	)
+	_done()
 
 
 # --- Spawning ----------------------------------------------------------------
 
 func _test_spawning() -> void:
-	print("spawning")
+	_section("spawning")
 
 	var spawner := _spawner()
 	var npc := spawner.spawn(&"walker", Vector3(1, 0, 2))
@@ -975,6 +1015,7 @@ func _test_spawning() -> void:
 	_check(positions.size() == 5, "and no two of them are in the same place")
 
 	spawner.queue_free()
+	_done()
 
 
 ## The same spawner, into a 2D world.
@@ -986,7 +1027,7 @@ func _test_spawning() -> void:
 ## and the reverse. Both must be refused rather than half-built, because a scene that is
 ## instantiated and then rejected is a leaked node nothing reports.
 func _test_spawning_2d() -> void:
-	print("spawning in 2D")
+	_section("spawning in 2D")
 
 	var world_2d := Node2D.new()
 	_world.add_child(world_2d)
@@ -1085,10 +1126,11 @@ func _test_spawning_2d() -> void:
 	)
 
 	world_2d.queue_free()
+	_done()
 
 
 func _test_authority() -> void:
-	print("authority")
+	_section("authority")
 
 	var client := DotNpcSpawner.new()
 	client.catalogue = _catalogue()
@@ -1100,10 +1142,11 @@ func _test_authority() -> void:
 	_check(client.world_count() == 0, "and nothing appeared")
 
 	client.queue_free()
+	_done()
 
 
 func _test_world_budget() -> void:
-	print("the world budget")
+	_section("the world budget")
 
 	var limits := _limits()
 	limits.world_budget = 10
@@ -1122,10 +1165,11 @@ func _test_world_budget() -> void:
 	_check(spawner.world_cost() == 9, "and the cost adds up", "%d" % spawner.world_cost())
 
 	spawner.queue_free()
+	_done()
 
 
 func _test_per_kind_cap() -> void:
-	print("the per-kind cap")
+	_section("the per-kind cap")
 
 	var limits := _limits()
 	limits.world_budget = 100
@@ -1151,10 +1195,11 @@ func _test_per_kind_cap() -> void:
 	)
 
 	spawner.queue_free()
+	_done()
 
 
 func _test_spawn_interval() -> void:
-	print("the spawn interval")
+	_section("the spawn interval")
 
 	var limits := _limits()
 	limits.spawn_interval = 0.5
@@ -1181,10 +1226,11 @@ func _test_spawn_interval() -> void:
 	)
 
 	spawner.queue_free()
+	_done()
 
 
 func _test_navigable_spawn() -> void:
-	print("navigable spawns")
+	_section("navigable spawns")
 
 	var limits := _limits()
 	limits.require_navigable_spawn = true
@@ -1224,10 +1270,11 @@ func _test_navigable_spawn() -> void:
 	_check(not spawner.has_nav(), "and navigation can be cleared on a map change")
 
 	spawner.queue_free()
+	_done()
 
 
 func _test_spawner_pathing() -> void:
-	print("spawner pathing")
+	_section("spawner pathing")
 
 	var limits := _limits()
 	limits.spawn_snap_radius = 3.0
@@ -1324,10 +1371,11 @@ func _test_spawner_pathing() -> void:
 	_check(path_flag.reaches_goal(), "and a complete path says it reaches its goal")
 
 	spawner.queue_free()
+	_done()
 
 
 func _test_brains() -> void:
-	print("brains")
+	_section("brains")
 
 	var spawner := _spawner()
 	var npc := spawner.spawn(&"walker", Vector3.ZERO)
@@ -1362,10 +1410,11 @@ func _test_brains() -> void:
 	)
 
 	spawner.queue_free()
+	_done()
 
 
 func _test_damage() -> void:
-	print("damage")
+	_section("damage")
 
 	var spawner := _spawner()
 	var npc := spawner.spawn(&"walker", Vector3.ZERO)
@@ -1405,10 +1454,11 @@ func _test_damage() -> void:
 	_check(deaths.size() == 2, "and lands on the same signal")
 
 	spawner.queue_free()
+	_done()
 
 
 func _test_reclaim() -> void:
-	print("reclaim")
+	_section("reclaim")
 
 	var limits := _limits()
 	limits.reclaim_distance = 40.0
@@ -1446,10 +1496,11 @@ func _test_reclaim() -> void:
 	)
 
 	spawner.queue_free()
+	_done()
 
 
 func _test_cleanup() -> void:
-	print("cleanup")
+	_section("cleanup")
 
 	var spawner := _spawner()
 
@@ -1473,10 +1524,11 @@ func _test_cleanup() -> void:
 	_check(spawner.clear_all() == 1, "and everything can be cleared")
 
 	spawner.queue_free()
+	_done()
 
 
 func _test_no_leaked_nodes() -> void:
-	print("no leaks")
+	_section("no leaks")
 
 	var holder := Node3D.new()
 	_world.add_child(holder)
@@ -1504,12 +1556,13 @@ func _test_no_leaked_nodes() -> void:
 		"%d left" % spawner.get_child_count())
 
 	holder.queue_free()
+	_done()
 
 
 # --- Replication --------------------------------------------------------------
 
 func _test_net_sync() -> void:
-	print("replication")
+	_section("replication")
 
 	var specs := DotNpcNetSync.specs()
 	_check(specs.size() == 6, "there is a spec for what crosses the wire")
@@ -1575,6 +1628,7 @@ func _test_net_sync() -> void:
 	mirror = null
 	node.queue_free()
 	spawner.queue_free()
+	_done()
 
 
 ## The receiving half of a replication, without dot-net in the project.
