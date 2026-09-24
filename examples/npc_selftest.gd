@@ -18,13 +18,13 @@ const BODY := "res://fixtures/npc_body.tscn"
 const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 
-const CHECKS := 203
+const CHECKS := 206
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
 ## bailed out early after a failed guard is counted as not finished on purpose. The CHECKS
 ## total is the other half — see docs/testing.md.
-const SECTIONS := 29
+const SECTIONS := 30
 
 var _passed := 0
 var _failed := 0
@@ -71,6 +71,7 @@ func _run() -> void:
 	_test_navigable_spawn()
 	_test_spawner_pathing()
 	_test_brains()
+	_test_brains_are_released()
 	_test_damage()
 	_test_reclaim()
 	_test_cleanup()
@@ -1410,6 +1411,35 @@ func _test_brains() -> void:
 	)
 
 	spawner.queue_free()
+	_done()
+
+
+## A brain and its NPC point at each other. See [method DotNpcBrain.unbind].
+func _test_brains_are_released() -> void:
+	_section("a brain and its NPC let go of each other")
+
+	var spawner := _spawner()
+	var removed := spawner.spawn(&"walker", Vector3.ZERO)
+	var kept := spawner.spawn(&"walker", Vector3.ZERO)
+
+	var removed_brain: WeakRef = weakref(removed.brain)
+	spawner.remove(removed.instance_id)
+	removed = null
+
+	_check(removed_brain.get_ref() == null, "a removed NPC's brain is freed")
+
+	# [b]The path that leaked: nobody removes anything.[/b] A world is torn down by freeing
+	# its nodes, so the spawner's own table goes and every NPC in it is left holding its
+	# brain while the brain holds it. Freed rather than queued, so PREDELETE runs now.
+	var kept_brain: WeakRef = weakref(kept.brain)
+	var kept_npc: WeakRef = weakref(kept)
+	kept = null
+	_world.remove_child(spawner)
+	spawner.free()
+
+	_check(kept_brain.get_ref() == null, "and a freed spawner's brains go with it",
+		"the spawner never removed them, and the brain and the NPC point at each other")
+	_check(kept_npc.get_ref() == null, "and so do the NPCs")
 	_done()
 
 

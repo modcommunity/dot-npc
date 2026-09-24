@@ -330,6 +330,10 @@ the same target after a gap**. `update_target` only moves `target_since` when th
 actually changes, because restarting the clock there is an NPC that never finishes reacting
 to somebody who keeps stepping behind a pillar.
 
+## A brain and its NPC point at each other, so the spawner lets go of both
+
+`DotNpcBrain.npc` holds the instance and the instance's `brain` holds the brain; `DotNpcAiBrain.context` holds a context whose `brain` holds the brain back. Two `RefCounted`s that point at each other are never freed, and `remove()` used to clear one end of the first pair and neither end of the second — which read exactly like the fix. The path that leaks hardest never calls `remove()` at all: a world is torn down by freeing its nodes. So `DotNpcBrain.unbind()` clears `npc`, `director` and `path` after calling `_npc_unbound()`, where a subclass drops whatever it built around them (`DotNpcAiBrain` drops its context, tree, machine and blackboard), and the spawner calls it from `remove()` and, for every NPC still alive, from its `NOTIFICATION_PREDELETE` — not `_exit_tree`, because a spawner reparented during a map change must keep its NPCs thinking. Measured in game-g2gfast's `dedicated`: eleven brains, contexts and tree nodes alive at exit before, none after. `DotVehicleSpawner._unbind` is the same shape for the same reason.
+
 ## Validating
 
 ```bash

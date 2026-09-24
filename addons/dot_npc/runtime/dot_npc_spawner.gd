@@ -854,12 +854,44 @@ func remove(instance_id: int, reason: StringName = REASON_ADMIN) -> bool:
 	# director that checked only the node would keep a reclaimed NPC against its budget
 	# for as long as that frame lasts.
 	npc.alive = false
-	npc.brain = null
+	_unbind(npc)
 
 	if npc.node != null and is_instance_valid(npc.node):
 		npc.node.queue_free()
 
 	return true
+
+
+## Breaks the NPC <-> brain cycle. See [method DotNpcBrain.unbind].
+##
+## Called from [method remove] and when this spawner is freed. Clearing only `npc.brain`
+## — which is what [method remove] did — reads exactly like the fix and is not one: the
+## brain's own context points back at the brain, and nothing ever called remove on the
+## path that leaks hardest.
+func _unbind(npc: DotNpcInstance) -> void:
+	if npc == null:
+		return
+
+	if npc.brain is DotNpcBrain:
+		(npc.brain as DotNpcBrain).unbind()
+
+	npc.brain = null
+
+
+## Everything still bound when the spawner goes away.
+##
+## PREDELETE rather than `_exit_tree`: a spawner taken out of the tree and put back —
+## a world reparented during a map change — must keep its NPCs thinking. Only a spawner
+## that is actually being freed has NPCs nobody will ever remove.
+func _notification(what: int) -> void:
+	if what != NOTIFICATION_PREDELETE:
+		return
+
+	for id in _npcs:
+		var npc: Variant = _npcs[id]
+
+		if npc is DotNpcInstance:
+			_unbind(npc)
 
 
 ## Removes everything one owner spawned. Returns how many went.

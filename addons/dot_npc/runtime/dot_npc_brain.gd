@@ -53,6 +53,21 @@ func bind(p_npc: DotNpcInstance, p_director: Node) -> void:
 	_npc_ready()
 
 
+## Lets go of the NPC, the director and anything a subclass built around them.
+##
+## [b]A brain and its NPC point at each other[/b] — [member npc] here, `brain` there —
+## and two [RefCounted]s that do are never freed: GDScript has no cycle collector. So
+## [DotNpcSpawner] calls this when it removes the NPC and again, for everything still
+## alive, when the spawner itself is freed, because a world is torn down by freeing its
+## nodes and never removes its NPCs one at a time. Measured in game-g2gfast: eleven
+## brains, contexts and tree nodes alive at exit, and the NPC scripts with them.
+func unbind() -> void:
+	_npc_unbound()
+	npc = null
+	director = null
+	path = null
+
+
 ## One simulated tick.
 func think(delta: float) -> void:
 	age += delta
@@ -86,6 +101,13 @@ func _npc_damaged(_amount: float, _by: StringName) -> void:
 
 ## Called once, before the node is freed. The last chance to drop a loot bag.
 func _npc_died(_by: StringName) -> void:
+	pass
+
+
+## Called by [method unbind], before [member npc] is cleared. Drop every reference that
+## leads back to this brain or to its NPC — a context, a tree, a state machine — or the
+## cycle outlives the spawner that made it.
+func _npc_unbound() -> void:
 	pass
 
 
