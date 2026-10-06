@@ -18,7 +18,7 @@ const BODY := "res://fixtures/npc_body.tscn"
 const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 
-const CHECKS := 206
+const CHECKS := 210
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
@@ -855,6 +855,19 @@ func _test_senses_basics() -> void:
 		not senses.perceives(npc, _candidate(&"z", Vector3(0, 0, -5), &"hostile")),
 		"and its own faction is never a target"
 	)
+
+	# The per-NPC scale: one attentive NPC of a kind sees further than the kind does, and
+	# a dull one less far, without a second definition.
+	npc.sight_scale = 3.0
+	_check(
+		senses.perceives(npc, _candidate(&"a", Vector3(0, 0, -50))),
+		"a sight scale of 3 sees what the kind's range does not"
+	)
+	npc.sight_scale = 0.25
+	_check(
+		not senses.perceives(npc, _candidate(&"a", Vector3(0, 0, -10))),
+		"and one of a quarter does not see what the kind would"
+	)
 	_done()
 
 
@@ -1654,6 +1667,32 @@ func _test_net_sync() -> void:
 	DotNpcNetSync.apply(node, probe)
 
 	_check(node.global_position == Vector3(5, 1, 6), "and a client can apply one")
+
+	# Facing survives the trip. A server body turned by `face` and a client node given the
+	# replicated yaw must look the same way — the two halves were each half a turn out,
+	# which cancelled on screen and left every server-side sight cone pointing backwards.
+	var walker := spawner.spawn(&"walker", Vector3(30, 0, 30))
+	if walker != null and walker.brain is DotNpcBrain:
+		(walker.brain as DotNpcBrain).face(Vector3(1, 0, 0))
+		_check(
+			walker.facing().distance_to(Vector3(1, 0, 0)) < 0.01,
+			"an NPC told to face +X faces +X",
+			"facing %s" % str(walker.facing())
+		)
+		var mirror_node := Node3D.new()
+		_world.add_child(mirror_node)
+		var sent := _NetProbe.new()
+		sent.net_yaw = DotNpcNetSync.quantise_yaw(DotNpcNetSync.yaw_of(walker))
+		DotNpcNetSync.apply(mirror_node, sent)
+		_check(
+			(-mirror_node.global_transform.basis.z).distance_to(Vector3(1, 0, 0)) < 0.05,
+			"and a client given its yaw faces the same way",
+			"client faces %s" % str(-mirror_node.global_transform.basis.z)
+		)
+		mirror_node.queue_free()
+	else:
+		_check(false, "an NPC told to face +X faces +X", "no walker brain to turn")
+		_check(false, "and a client given its yaw faces the same way")
 
 	mirror = null
 	node.queue_free()

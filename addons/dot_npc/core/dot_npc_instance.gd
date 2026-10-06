@@ -84,6 +84,15 @@ var engaged_at: float = 0.0
 ## a hunter sit in ALERT for ever.
 var target_since: float = 0.0
 
+## Multiplies the definition's sight range for this one NPC. 1.0 is "as the kind says".
+##
+## [b]Per instance, because how far a KIND can see and how attentive THIS one is are two
+## different facts.[/b] A brain sets it from its character — dot-npc-ai's `alertness` — and a
+## server turning its NPCs up or down moves it for every NPC at once without touching the
+## catalogue. Sight only: hearing is a loudness the game measured, and scaling it here would
+## be an NPC that hears a footstep further than the footstep travels.
+var sight_scale: float = 1.0
+
 ## The brain, if the definition named one. Never a `class_name`.
 var brain: Object = null
 

@@ -256,7 +256,16 @@ func face(direction: Vector3) -> void:
 	# `look_at` refuses a target equal to the node's own position and prints an error;
 	# the flat length check above is what keeps that off a server's log once a tick per
 	# NPC, which is the sort of thing that turns a log into noise nobody reads.
-	body.look_at(body.global_position - flat.normalized(), Vector3.UP)
+	#
+	# [b]Plus, not minus.[/b] `look_at` points -Z at its target, and -Z is what
+	# [method DotNpcInstance.facing] reads. This used to look at `position - direction`,
+	# which turned every 3D NPC's back to where it was going: the sight cone the senses
+	# test pointed BEHIND a chasing monster, so a monster with a 60-degree cone lost the
+	# player it was running at every few seconds and reacquired them only by wandering
+	# round. Nobody saw it on a client because `DotNpcNetSync.yaw_of` was half a turn out
+	# the other way, and the two cancelled on screen. Found by dot-npc-ai's turn-rate
+	# check, which asked how far an NPC turned and was told 180 degrees.
+	body.look_at(body.global_position + flat.normalized(), Vector3.UP)
 
 
 ## Stops the body dead, horizontally.

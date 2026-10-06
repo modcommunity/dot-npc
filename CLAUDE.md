@@ -310,6 +310,14 @@ and a 2D one through `spawn` both return null, and the instantiated scene is fre
 scene built and then rejected is a leaked node nothing reports. The suite checks the child
 count either side of both refusals.
 
+## `face` and `facing` disagreed by half a turn
+
+`DotNpcBrain.face(d)` did `look_at(position - d)`. `look_at` points -Z at its target and `facing()` reads -Z, so after facing a direction an NPC reported facing the opposite one: every 3D NPC's sight cone pointed behind it while it chased, and game-arena's monsters, with 60-to-100-degree cones, kept losing the player they were running at. `DotNpcNetSync.yaw_of` was half a turn out the other way (`atan2(f.x, f.z)` for a -Z facing), so a client applying the replicated yaw drew the NPC the right way round and nobody saw anything wrong. Both are fixed together — `look_at(position + d)`, and `yaw_of` returns the node's own `rotation.y` — and the replication section asserts the round trip: told to face +X, an NPC faces +X, and a client given its yaw faces +X too. Found by dot-npc-ai's turn-rate check, which asked how far an NPC had turned in one tick and was told 180 degrees.
+
+## `sight_scale` is per NPC, and the definition's range is per kind
+
+`DotNpcInstance.sight_scale` multiplies `DotNpcDef.sight_range` for one NPC. How far a kind can see belongs in the catalogue; how attentive this one is belongs to its character, and dot-npc-ai's brain writes the character's `alertness` here — which until this field existed was declared on every character and read by nothing. Sight only: hearing is a loudness the game measured, and scaling it would be an NPC that hears a footstep further than the footstep travels.
+
 ## `engaged_at` and `target_since` are different questions
 
 Both are simulated seconds and both are about a target, and they answer opposite things:

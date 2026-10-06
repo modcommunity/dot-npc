@@ -82,7 +82,7 @@ func perceives(npc: DotNpcInstance, cand: Candidate) -> bool:
 	if distance <= minf(npc.def.hearing_range, cand.loudness):
 		return true
 
-	if distance > npc.def.sight_range:
+	if distance > npc.def.sight_range * maxf(npc.sight_scale, 0.0):
 		return false
 
 	if npc.def.sight_half_angle_deg < 180.0:

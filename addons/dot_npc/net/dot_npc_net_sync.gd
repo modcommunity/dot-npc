@@ -144,7 +144,11 @@ static func yaw_of(npc: DotNpcInstance) -> float:
 
 	var facing := npc.facing()
 
-	return fposmod(atan2(facing.x, facing.z), TAU)
+	# The node's own `rotation.y`, which is what [method apply] writes back. Facing is -Z,
+	# so a yaw of θ faces (-sin θ, 0, -cos θ) and θ is atan2 of the NEGATED facing. This
+	# was `atan2(facing.x, facing.z)` — half a turn out — and it hid
+	# `DotNpcBrain.face` being half a turn out the other way.
+	return fposmod(atan2(-facing.x, -facing.z), TAU)
 
 
 static func quantise_yaw(yaw: float) -> int:
