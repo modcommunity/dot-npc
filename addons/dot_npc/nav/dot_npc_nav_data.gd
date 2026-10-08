@@ -72,7 +72,7 @@ enum Flag {
 	NO_HIDE = 1 << 6,  ## Never generate a cover spot here.
 }
 
-## What a cover spot is good for. Source's [code]HidingSpot[/code] flags.
+## What a cover spot is good for. The hiding-spot flags shipped navigation meshes use.
 enum Cover {
 	IN_COVER = 1 << 0,   ## Hard cover close by, in the direction of the normal.
 	SNIPER = 1 << 1,     ## A long sight line from here.

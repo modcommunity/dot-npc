@@ -104,7 +104,7 @@ shape of map that cannot have NPCs.
 The graph half was a search and nothing else for its first pass: A*, a chain of grid
 points, and a follower that walked them. Everything below came out of reading
 [Recast & Detour](../../external-study/game-dev/navigation/recastnavigation) and
-Source's `nav_mesh`, which are in `external-study` for exactly this and which had been
+a shipped engine's `nav_mesh` code, which are in `external-study` for exactly this and which had been
 read for nothing until now.
 
 ### Smoothing, because a grid can only turn eight ways
@@ -164,7 +164,7 @@ every follower walks the last leg straight through the wall.
 
 ### Cover, because a runtime cannot raycast a map it was handed as a graph
 
-Source's `nav_mesh` computes hiding spots at generation time and stores them; that is
+A shipped navigation mesh computes hiding spots at generation time and stores them; that is
 not an optimisation here, it is the only option. Nothing at runtime has the geometry —
 the map was built from constants and shipped as points — so if the generator does not
 write cover down, nothing can ever answer "where can I hide from that".
