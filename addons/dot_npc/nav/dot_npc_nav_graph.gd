@@ -208,21 +208,11 @@ func _nearest_passable(p: Vector3, radius: float) -> int:
 	if filter == null:
 		return data.nearest_point(p, radius)
 
-	var limit := data.point_radius if radius < 0.0 else radius
-	var limit_sq := limit * limit
-	var best := -1
-	var best_sq := INF
+	return data.nearest_point_where(p, radius, _passes_index)
 
-	for i in data.points.size():
-		var d_sq := data.points[i].distance_squared_to(p)
-		if d_sq >= best_sq or d_sq > limit_sq:
-			continue
-		if not filter.passes(data.area_of(i), data.flags_of(i)):
-			continue
-		best_sq = d_sq
-		best = i
 
-	return best
+func _passes_index(index: int) -> bool:
+	return filter.passes(data.area_of(index), data.flags_of(index))
 
 
 ## Plain A* with a straight-line heuristic.
@@ -241,24 +231,28 @@ func _search(start: int, goal: int) -> Dictionary:
 
 	var best_node := start
 	var best_heuristic := goal_position.distance_to(data.points[start])
+	var closed := {}
 
-	# An open list kept as a plain Array of [priority, index] and scanned linearly.
+	# The open list is a binary heap of [priority, index], ordered by priority and then by
+	# the order things were pushed, so two equal priorities come out in the order the
+	# linear scan this replaced took them.
 	#
-	# A binary heap is the textbook answer and is wrong at this size: a hundred-point
-	# graph makes the scan a hundred compares, and the heap's own bookkeeping costs
-	# more than that. Revisit it if a map ever ships thousands of points — and if one
-	# does, the real fix is a coarser graph, not a faster queue.
-	var open: Array = [[goal_position.distance_to(data.points[start]), start]]
+	# It was a plain Array scanned linearly, with a note to revisit it "if a map ever ships
+	# thousands of points". game-zombie-zone's campaign maps are several thousand, and a
+	# horde of forty repathing every second and a half was a server spending most of its
+	# tick choosing the next node.
+	var open := _Heap.new()
+	open.push(goal_position.distance_to(data.points[start]), start)
 
 	while not open.is_empty():
-		var best_slot := 0
+		var current := open.pop()
 
-		for i in range(1, open.size()):
-			if float((open[i] as Array)[0]) < float((open[best_slot] as Array)[0]):
-				best_slot = i
+		# A node pushed twice (found again by a cheaper route) is expanded once: the
+		# cheaper copy came out first, and the stale one is skipped here.
+		if closed.has(current):
+			continue
 
-		var current := int((open[best_slot] as Array)[1])
-		open.remove_at(best_slot)
+		closed[current] = true
 
 		if current == goal:
 			return {"came_from": came_from, "reached": true, "best": goal}
@@ -299,7 +293,7 @@ func _search(start: int, goal: int) -> Dictionary:
 				best_heuristic = heuristic
 				best_node = next
 
-			open.append([new_cost + heuristic, next])
+			open.push(new_cost + heuristic, next)
 
 	return {"came_from": came_from, "reached": false, "best": best_node}
 
@@ -434,3 +428,74 @@ func describe() -> Dictionary:
 		"searches": searches,
 		"failures": failures,
 	}
+
+
+## A min-heap of (priority, index), with the push order as the tie-break.
+class _Heap:
+	var _priority: PackedFloat64Array = PackedFloat64Array()
+	var _order: PackedInt64Array = PackedInt64Array()
+	var _index: PackedInt32Array = PackedInt32Array()
+	var _pushed: int = 0
+
+	func is_empty() -> bool:
+		return _index.is_empty()
+
+	func push(priority: float, index: int) -> void:
+		_priority.append(priority)
+		_order.append(_pushed)
+		_index.append(index)
+		_pushed += 1
+
+		var at := _index.size() - 1
+
+		while at > 0:
+			var parent := (at - 1) >> 1
+
+			if not _less(at, parent):
+				break
+
+			_swap(at, parent)
+			at = parent
+
+	func pop() -> int:
+		var top := _index[0]
+		var last := _index.size() - 1
+		_swap(0, last)
+		_priority.resize(last)
+		_order.resize(last)
+		_index.resize(last)
+
+		var at := 0
+
+		while true:
+			var left := at * 2 + 1
+			var right := left + 1
+			var smallest := at
+
+			if left < last and _less(left, smallest):
+				smallest = left
+			if right < last and _less(right, smallest):
+				smallest = right
+			if smallest == at:
+				break
+
+			_swap(at, smallest)
+			at = smallest
+
+		return top
+
+	func _less(a: int, b: int) -> bool:
+		if _priority[a] != _priority[b]:
+			return _priority[a] < _priority[b]
+		return _order[a] < _order[b]
+
+	func _swap(a: int, b: int) -> void:
+		var p := _priority[a]
+		_priority[a] = _priority[b]
+		_priority[b] = p
+		var o := _order[a]
+		_order[a] = _order[b]
+		_order[b] = o
+		var i := _index[a]
+		_index[a] = _index[b]
+		_index[b] = i

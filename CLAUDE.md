@@ -342,6 +342,12 @@ to somebody who keeps stepping behind a pillar.
 
 `DotNpcBrain.npc` holds the instance and the instance's `brain` holds the brain; `DotNpcAiBrain.context` holds a context whose `brain` holds the brain back. Two `RefCounted`s that point at each other are never freed, and `remove()` used to clear one end of the first pair and neither end of the second — which read exactly like the fix. The path that leaks hardest never calls `remove()` at all: a world is torn down by freeing its nodes. So `DotNpcBrain.unbind()` clears `npc`, `director` and `path` after calling `_npc_unbound()`, where a subclass drops whatever it built around them (`DotNpcAiBrain` drops its context, tree, machine and blackboard), and the spawner calls it from `remove()` and, for every NPC still alive, from its `NOTIFICATION_PREDELETE` — not `_exit_tree`, because a spawner reparented during a map change must keep its NPCs thinking. Measured in game-g2gfast's `dedicated`: eleven brains, contexts and tree nodes alive at exit before, none after. `DotVehicleSpawner._unbind` is the same shape for the same reason.
 
+## A campaign map is thousands of points, and three loops were written for hundreds
+
+The builder compared every point with every other, asked every obstacle about every point, the lookup scanned every point for the nearest, and A* scanned its open list linearly, with a note to revisit it "if a map ever ships thousands of points". game-zombie-zone's maps do (a 120 by 80 metre street at one metre is over six thousand), and forty zombies repathing every second and a half spent a server's tick in those loops. All four are indexed now: points by (x, z) bucket in `DotNpcNavData` (built lazily, dropped by `add_point`, `validate` and `invalidate_index`), obstacles by cell in the builder, neighbours by bucket, and A*'s open list is a binary heap ordered by priority then push order.
+
+**The answers are the scan's answers, ties included.** The lowest index still wins at an equal distance, and the edges are still connected in the same order, because a follower that snapped to a different one of two equidistant points depending on how an index was laid out would path differently on two machines. "navigation at scale" in the suite compares 300 random lookups with a brute-force scan; armed by skipping one column of buckets, 22 of them differed.
+
 ## Validating
 
 ```bash

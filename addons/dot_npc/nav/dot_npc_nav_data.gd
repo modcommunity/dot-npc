@@ -181,6 +181,7 @@ func edge_count() -> int:
 
 
 func add_point(p: Vector3, area: int = AREA_GROUND, point_flags: int = 0) -> int:
+	invalidate_index()
 	points.append(p)
 	areas.append(area)
 	flags.append(point_flags)
@@ -250,19 +251,121 @@ func connect_points(a: int, b: int) -> DotResult:
 
 
 ## The nearest walkable point to [param p], or -1 when none is within [param radius].
+##
+## [b]Through a bucket index, not a scan of every point.[/b] Every path request asks this
+## twice and every straight-line walkability test asks it once per sample, so on a map of
+## a few thousand points the linear scan this used to be was most of a server's tick with
+## forty NPCs repathing. The answer is the same one the scan gave, ties included: the
+## lowest index wins at an equal distance, because a follower that snapped to a different
+## one of two equidistant points depending on how the index was laid out would path
+## differently on two machines.
 func nearest_point(p: Vector3, radius: float = -1.0) -> int:
+	return nearest_point_where(p, radius, Callable())
+
+
+## [method nearest_point], skipping every point [param accept] says no to. [param accept]
+## is `func(index: int) -> bool`; an invalid Callable accepts everything.
+func nearest_point_where(p: Vector3, radius: float, accept: Callable) -> int:
 	var limit := point_radius if radius < 0.0 else radius
 	var limit_sq := limit * limit
 	var best := -1
 	var best_sq := INF
 
-	for i in points.size():
-		var d_sq := points[i].distance_squared_to(p)
-		if d_sq < best_sq and d_sq <= limit_sq:
-			best_sq = d_sq
-			best = i
+	_ensure_index()
+
+	var cell := _bucket_size
+	var x0 := floori((p.x - limit) / cell)
+	var x1 := floori((p.x + limit) / cell)
+	var z0 := floori((p.z - limit) / cell)
+	var z1 := floori((p.z + limit) / cell)
+
+	# A radius wider than the map would otherwise walk thousands of empty buckets; past
+	# the point where buckets outnumber points, the scan is the cheaper question.
+	if (x1 - x0 + 1) * (z1 - z0 + 1) > points.size():
+		for i in points.size():
+			var d_all := points[i].distance_squared_to(p)
+			if d_all <= limit_sq and (d_all < best_sq or (d_all == best_sq and i < best)):
+				if accept.is_valid() and not bool(accept.call(i)):
+					continue
+				best_sq = d_all
+				best = i
+		return best
+
+	for bx in range(x0, x1 + 1):
+		for bz in range(z0, z1 + 1):
+			var bucket: Variant = _buckets.get(Vector2i(bx, bz))
+
+			if bucket == null:
+				continue
+
+			for i: int in (bucket as PackedInt32Array):
+				var d_sq := points[i].distance_squared_to(p)
+
+				if d_sq > limit_sq or d_sq > best_sq or (d_sq == best_sq and i > best):
+					continue
+
+				if accept.is_valid() and not bool(accept.call(i)):
+					continue
+
+				best_sq = d_sq
+				best = i
 
 	return best
+
+
+## Every point within [param radius] of [param p], by index, in no particular order.
+func points_within(p: Vector3, radius: float) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	var limit_sq := radius * radius
+
+	_ensure_index()
+
+	var cell := _bucket_size
+
+	for bx in range(floori((p.x - radius) / cell), floori((p.x + radius) / cell) + 1):
+		for bz in range(floori((p.z - radius) / cell), floori((p.z + radius) / cell) + 1):
+			var bucket: Variant = _buckets.get(Vector2i(bx, bz))
+
+			if bucket == null:
+				continue
+
+			for i: int in (bucket as PackedInt32Array):
+				if points[i].distance_squared_to(p) <= limit_sq:
+					out.append(i)
+
+	return out
+
+
+## Drops the bucket index, so the next query rebuilds it. For anything that edited
+## [member points] in place: [method add_point] and [method validate] already do.
+func invalidate_index() -> void:
+	_buckets.clear()
+	_indexed_count = -1
+
+
+## Buckets of points by (x, z), two grid steps wide. Built on the first query after the
+## points change, never stored with the document: it is derived from the points and a copy
+## of it would be a second list that can fall out of step with the first.
+var _buckets: Dictionary = {}
+var _bucket_size: float = 4.0
+var _indexed_count: int = -1
+
+
+func _ensure_index() -> void:
+	if _indexed_count == points.size() and (not _buckets.is_empty() or points.is_empty()):
+		return
+
+	_buckets.clear()
+	_bucket_size = maxf(spacing() * 2.0, 1.0)
+
+	for i in points.size():
+		var key := Vector2i(floori(points[i].x / _bucket_size), floori(points[i].z / _bucket_size))
+		var bucket: PackedInt32Array = _buckets.get(key, PackedInt32Array())
+		bucket.append(i)
+		# Written back: a PackedInt32Array out of a Dictionary is a copy.
+		_buckets[key] = bucket
+
+	_indexed_count = points.size()
 
 
 ## Whether [param p] is close enough to the mesh for an NPC to stand there.
@@ -369,6 +472,8 @@ func matches(current_digest: String) -> bool:
 
 
 func validate() -> DotResult:
+	invalidate_index()
+
 	if map_id == &"":
 		return DotResult.fail(DotError.CODE_INVALID, "Nav data needs a map id.")
 

@@ -18,13 +18,13 @@ const BODY := "res://fixtures/npc_body.tscn"
 const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 
-const CHECKS := 210
+const CHECKS := 216
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
 ## bailed out early after a failed guard is counted as not finished on purpose. The CHECKS
 ## total is the other half — see docs/testing.md.
-const SECTIONS := 30
+const SECTIONS := 31
 
 var _passed := 0
 var _failed := 0
@@ -53,6 +53,7 @@ func _run() -> void:
 	_test_nav_data()
 	_test_nav_builder()
 	_test_nav_graph()
+	_test_nav_at_scale()
 	_test_nav_smoothing()
 	_test_nav_filter()
 	_test_nav_partial()
@@ -393,6 +394,75 @@ func _test_nav_builder() -> void:
 		not linked.find_path(Vector3(0, 0, 0), Vector3(0, 6, 0), 2.0).is_empty(),
 		"and a declared link is what joins two storeys"
 	)
+	_done()
+
+
+## A campaign-sized map: the indexes added for it must answer what a scan does, and fast.
+##
+## [b]Equality against brute force, not "it returned something".[/b] A bucket index that
+## missed the neighbouring bucket would still find a point, just not the nearest one, and
+## an NPC snapping to the second-nearest point paths from the wrong side of a wall.
+func _test_nav_at_scale() -> void:
+	_section("navigation at scale")
+
+	var started := Time.get_ticks_msec()
+	var builder := DotNpcNavBuilder.new()
+	builder.spacing = 1.0
+	builder.point_radius = 1.0
+	builder.clearance = 0.35
+	builder.generate_cover = false
+	builder.add_floor(AABB(Vector3(-60, 0, -40), Vector3(120, 0, 80)), 0.0)
+
+	# A street grid of blocks, so there are walls everywhere a bucket boundary could fall.
+	for bx in range(-5, 5):
+		for bz in range(-3, 3):
+			builder.add_obstacle(AABB(Vector3(bx * 12.0 + 2.0, 0, bz * 12.0 + 2.0), Vector3(6.5, 4, 6.5)))
+
+	var nav := builder.build(&"scale", "digest")
+	var built_ms := Time.get_ticks_msec() - started
+
+	_check(nav.point_count() > 6000, "a 120 by 80 metre map at one metre is thousands of points", "%d" % nav.point_count())
+	_check(built_ms < 20000, "and it builds in seconds, not minutes", "%d ms" % built_ms)
+
+	var mismatches := 0
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 4242
+
+	for i in 300:
+		var probe := Vector3(rng.randf_range(-65, 65), rng.randf_range(-0.5, 0.5), rng.randf_range(-45, 45))
+		var radius := rng.randf_range(0.2, 6.0)
+		var indexed := nav.nearest_point(probe, radius)
+		var scanned := -1
+		var best := INF
+
+		for j in nav.points.size():
+			var d := nav.points[j].distance_squared_to(probe)
+			if d <= radius * radius and d < best:
+				best = d
+				scanned = j
+
+		if indexed != scanned:
+			mismatches += 1
+
+	_check(mismatches == 0, "the bucket index answers exactly what a scan of every point does", "%d of 300 differ" % mismatches)
+
+	var graph := DotNpcNavGraph.new(nav)
+	started = Time.get_ticks_msec()
+	var path := graph.find_path(Vector3(-58, 0, -38), Vector3(58, 0, 38), 1.5)
+	var path_ms := Time.get_ticks_msec() - started
+
+	_check(not path.is_empty(), "a path crosses the whole map")
+	_check(path_ms < 1500, "in well under a second", "%d ms" % path_ms)
+
+	var walled := false
+	for k in range(1, path.size()):
+		for bx in range(-5, 5):
+			for bz in range(-3, 3):
+				var block := AABB(Vector3(bx * 12.0 + 2.0, -1, bz * 12.0 + 2.0), Vector3(6.5, 6, 6.5))
+				if block.has_point(path[k - 1].lerp(path[k], 0.5)):
+					walled = true
+
+	_check(not walled, "and no step of it goes through a block")
 	_done()
 
 

@@ -98,6 +98,7 @@ func add_floor(
 ## Adds a box nothing may stand inside.
 func add_obstacle(box: AABB) -> void:
 	_obstacles.append(box)
+	_obstacle_cells.clear()
 
 
 ## Forces a connection between two places the grid would not join — a ladder, a drop.
@@ -168,8 +169,35 @@ func build(map_id: StringName, digest: String) -> DotNpcNavData:
 	var reach := spacing * 1.5
 	var reach_sq := reach * reach
 
+	# Bucketed by (x, z), so each point is compared with the points near it rather than
+	# with every other point. The all-pairs loop this replaced was fine for an arena of a
+	# few hundred points and took most of a minute over a campaign map of several thousand.
+	# A bucket is `reach` wide, so every possible neighbour is in the three-by-three block
+	# round a point's own; `j > i` keeps each pair to one test, as the old loop did, and
+	# the edges come out in the same order.
+	var near := {}
+
 	for i in positions.size():
-		for j in range(i + 1, positions.size()):
+		var key := Vector2i(floori(positions[i].x / reach), floori(positions[i].z / reach))
+		var bucket: PackedInt32Array = near.get(key, PackedInt32Array())
+		bucket.append(i)
+		near[key] = bucket
+
+	for i in positions.size():
+		var home := Vector2i(floori(positions[i].x / reach), floori(positions[i].z / reach))
+		var found := PackedInt32Array()
+
+		for dx in range(-1, 2):
+			for dz in range(-1, 2):
+				var bucket: Variant = near.get(home + Vector2i(dx, dz))
+				if bucket != null:
+					for j: int in (bucket as PackedInt32Array):
+						if j > i:
+							found.append(j)
+
+		found.sort()
+
+		for j in found:
 			if positions[i].distance_squared_to(positions[j]) > reach_sq:
 				continue
 
@@ -270,11 +298,44 @@ func _key(p: Vector3) -> String:
 
 
 func _blocked(p: Vector3) -> bool:
-	for box in _obstacles:
-		if box.grow(clearance).has_point(p):
+	if _obstacle_cells.is_empty() and not _obstacles.is_empty():
+		_index_obstacles()
+
+	var bucket: Variant = _obstacle_cells.get(
+		Vector2i(floori(p.x / OBSTACLE_CELL), floori(p.z / OBSTACLE_CELL))
+	)
+
+	if bucket == null:
+		return false
+
+	for index: int in (bucket as PackedInt32Array):
+		if _obstacles[index].grow(clearance).has_point(p):
 			return true
 
 	return false
+
+
+## Metres of (x, z) one obstacle bucket covers.
+const OBSTACLE_CELL := 4.0
+
+## Obstacle indexes by the (x, z) cells their grown box touches. Built on the first test
+## after an obstacle is added: a map of two thousand boxes asked "is this point inside
+## any of them" for every one of several thousand points was tens of millions of tests.
+var _obstacle_cells: Dictionary = {}
+
+
+func _index_obstacles() -> void:
+	_obstacle_cells.clear()
+
+	for index in _obstacles.size():
+		var grown := _obstacles[index].grow(clearance)
+
+		for bx in range(floori(grown.position.x / OBSTACLE_CELL), floori(grown.end.x / OBSTACLE_CELL) + 1):
+			for bz in range(floori(grown.position.z / OBSTACLE_CELL), floori(grown.end.z / OBSTACLE_CELL) + 1):
+				var key := Vector2i(bx, bz)
+				var bucket: PackedInt32Array = _obstacle_cells.get(key, PackedInt32Array())
+				bucket.append(index)
+				_obstacle_cells[key] = bucket
 
 
 ## Whether the straight line between two points passes through an obstacle.
