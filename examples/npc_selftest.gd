@@ -18,7 +18,7 @@ const BODY := "res://fixtures/npc_body.tscn"
 const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 
-const CHECKS := 221
+const CHECKS := 223
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
@@ -59,7 +59,7 @@ func _run() -> void:
 	_test_nav_partial()
 	_test_nav_cover()
 	_test_path()
-	_test_senses_basics()
+	await _test_senses_basics()
 	_test_senses_commitment()
 	_test_senses_grace()
 	_test_target_since()
@@ -981,6 +981,36 @@ func _test_senses_basics() -> void:
 		not senses.perceives(npc, _candidate(&"a", Vector3(0, 0, -10))),
 		"and one of a quarter does not see what the kind would"
 	)
+
+	# Standing on a real floor, with line of sight on. The sight line used to start at the
+	# feet, ON the floor, and hit it at distance zero: every NPC on a floor was blind.
+	var ground := StaticBody3D.new()
+	var slab := CollisionShape3D.new()
+	var slab_box := BoxShape3D.new()
+	slab_box.size = Vector3(40, 0.2, 40)
+	slab.shape = slab_box
+	slab.position = Vector3(0, -0.1, 0)
+	ground.add_child(slab)
+	var wall := CollisionShape3D.new()
+	var wall_box := BoxShape3D.new()
+	wall_box.size = Vector3(4, 4, 0.2)
+	wall.shape = wall_box
+	wall.position = Vector3(8, 2, -5)
+	ground.add_child(wall)
+	_world.add_child(ground)
+	await get_tree().physics_frame
+
+	var looker_def := DotNpcDef.make(&"looker", BODY)
+	looker_def.sight_range = 20.0
+	looker_def.sight_half_angle_deg = 80.0
+	var looker := _loose_npc(looker_def, Vector3(0, 0, 0))
+	senses.occlusion_mask = 0xFFFFFFFF
+	_check(senses.perceives(looker, _candidate(&"a", Vector3(0, 1, -8))),
+		"an NPC standing on a floor sees what is in front of it")
+	var behind_wall := _loose_npc(looker_def, Vector3(8, 0, 0))
+	_check(not senses.perceives(behind_wall, _candidate(&"a", Vector3(8, 1, -10))),
+		"and not through a wall")
+	ground.queue_free()
 	_done()
 
 

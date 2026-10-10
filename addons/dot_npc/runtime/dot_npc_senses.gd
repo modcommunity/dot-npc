@@ -115,8 +115,9 @@ func _has_line_of_sight(npc: DotNpcInstance, cand: Candidate) -> bool:
 
 	los_casts += 1
 
+	# From the eyes, not the feet: see [member DotNpcDef.eye_height].
 	var query := PhysicsRayQueryParameters3D.create(
-		npc.position(), cand.position, occlusion_mask
+		npc.position() + Vector3.UP * npc.def.eye_height, cand.position, occlusion_mask
 	)
 	# Excluded by RID, which is what `exclude` takes — an instance id is an int and
 	# `Array[RID]` refuses it. A body that is not a CollisionObject3D has no RID to

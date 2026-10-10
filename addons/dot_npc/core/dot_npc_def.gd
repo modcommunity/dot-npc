@@ -99,6 +99,15 @@ enum Weight {
 ## most expensive thing in here.
 @export var require_line_of_sight: bool = true
 
+## How far above its feet the NPC looks from, in metres: where the sight line starts.
+##
+## [b]Not zero, and that was a bug.[/b] The line used to start at the NPC's position, which is
+## its feet, which is ON the floor it stands on — and a ray that starts on a surface hits it at
+## distance zero. Every NPC standing on a floor with line of sight on was blind, saw nobody, and
+## nothing said so; game-arena had line of sight turned off for another reason and never met it.
+## game-zombie-zone's idle commons found it by never noticing a survivor in front of them.
+@export_range(0.0, 20.0, 0.05) var eye_height: float = 1.5
+
 @export_group("Navigation")
 
 ## Navigation flags this kind of NPC cannot traverse. See [enum DotNpcNavData.Flag].
@@ -192,6 +201,8 @@ func to_dictionary() -> Dictionary:
 		out["content"] = String(content_id)
 	if not require_line_of_sight:
 		out["los"] = false
+	if eye_height != 1.5:
+		out["eye"] = eye_height
 	if nav_exclude_flags != 0:
 		out["nav_exclude"] = nav_exclude_flags
 	if permission != "":
@@ -224,6 +235,7 @@ static func from_dictionary(data: Dictionary) -> DotNpcDef:
 	npc.sight_half_angle_deg = clampf(float(data.get("sight_angle", 60.0)), 0.0, 180.0)
 	npc.hearing_range = maxf(float(data.get("hearing", 12.0)), 0.0)
 	npc.require_line_of_sight = bool(data.get("los", true))
+	npc.eye_height = clampf(float(data.get("eye", 1.5)), 0.0, 20.0)
 	npc.nav_exclude_flags = maxi(int(data.get("nav_exclude", 0)), 0)
 	npc.permission = str(data.get("permission", ""))
 	npc.enabled = bool(data.get("enabled", true))
