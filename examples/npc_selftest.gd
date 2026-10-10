@@ -18,7 +18,7 @@ const BODY := "res://fixtures/npc_body.tscn"
 const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 
-const CHECKS := 216
+const CHECKS := 218
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
@@ -394,6 +394,29 @@ func _test_nav_builder() -> void:
 		not linked.find_path(Vector3(0, 0, 0), Vector3(0, 6, 0), 2.0).is_empty(),
 		"and a declared link is what joins two storeys"
 	)
+
+	# A room, a doorway and a street, each laid from its own corner, so their grids are offset
+	# by a fraction of a step. Rounding positions to the grid used to merge the room's last row
+	# with the street's first and split the graph at the door (game-zombie-zone's start room).
+	var offset := DotNpcNavBuilder.new()
+	offset.spacing = 1.0
+	offset.clearance = 0.35
+	offset.add_floor(AABB(Vector3(-4.9, 0, -13.9), Vector3(9.8, 0, 7.8)), 0.0)
+	offset.add_floor(AABB(Vector3(-1.1, 0, -6.3), Vector3(2.2, 0, 0.8)), 0.0)
+	offset.add_floor(AABB(Vector3(-8.9, 0, -6.0), Vector3(17.8, 0, 16.0)), 0.0)
+	offset.add_obstacle(AABB(Vector3(-5.2, 0, -6.0), Vector3(4.0, 3, 0.2)))
+	offset.add_obstacle(AABB(Vector3(1.2, 0, -6.0), Vector3(4.0, 3, 0.2)))
+	var street := offset.build(&"offset", "digest")
+	var joined := DotNpcNavGraph.new(street)
+	_check(not joined.find_path(Vector3(0, 0, -10), Vector3(0, 0, 5), 1.5).is_empty(),
+		"floors laid from different corners still join through a doorway")
+
+	var crowded := 0
+	for i in street.points.size():
+		for j in range(i + 1, street.points.size()):
+			if street.points[i].distance_to(street.points[j]) < 0.5:
+				crowded += 1
+	_check(crowded == 0, "and overlapping floors still do not put two points in one place", "%d pairs" % crowded)
 	_done()
 
 

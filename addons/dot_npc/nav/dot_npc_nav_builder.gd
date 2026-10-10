@@ -119,13 +119,22 @@ func build(map_id: StringName, digest: String) -> DotNpcNavData:
 	nav.point_radius = point_radius
 	nav.grid_spacing = spacing
 
-	# Point key -> index, where the key is the quantised position. Two floors that
-	# overlap — a landing and the walkway it joins — would otherwise put two points in
-	# the same spot, and an NPC standing between them oscillates.
+	# Points already placed, bucketed by (x, z) cell, so a second floor overlapping a first
+	# does not put a second point where one already is.
+	#
+	# [b]By distance, not by rounding.[/b] This used to be a key of each position rounded to
+	# the grid step, and that merged points that were NOT in the same place: two floors laid
+	# from different corners have grids offset by a fraction of a step, and a point 0.9 m from
+	# another rounds to the same key often enough to matter. game-zombie-zone's practice street
+	# lost the whole row of points joining its start room to the street that way — the room
+	# floor's last row and the street's first rounded together — and the graph split in two at
+	# the doorway, with nothing to say so but survivors who would not leave the room. Half a
+	# step is "the same place"; anything further apart is two points.
 	var seen := {}
 	var positions: Array[Vector3] = []
 	var point_areas: Array[int] = []
 	var point_flags: Array[int] = []
+	var same_place := spacing * 0.5
 
 	for entry in _floors:
 		var floor_data: Dictionary = entry
@@ -146,12 +155,13 @@ func build(map_id: StringName, digest: String) -> DotNpcNavData:
 				if _blocked(p):
 					continue
 
-				var key := _key(p)
-
-				if seen.has(key):
+				if _already_placed(p, seen, positions, same_place):
 					continue
 
-				seen[key] = positions.size()
+				var cell := Vector2i(floori(p.x / spacing), floori(p.z / spacing))
+				var bucket: PackedInt32Array = seen.get(cell, PackedInt32Array())
+				bucket.append(positions.size())
+				seen[cell] = bucket
 				positions.append(p)
 				point_areas.append(floor_area_id)
 				point_flags.append(floor_flags)
@@ -291,10 +301,25 @@ func _mark_cover(nav: DotNpcNavData) -> void:
 			nav.add_cover(p, best, DotNpcNavData.Cover.IN_COVER)
 
 
-func _key(p: Vector3) -> String:
-	return "%d,%d,%d" % [
-		roundi(p.x / spacing), roundi(p.y / spacing), roundi(p.z / spacing)
-	]
+## Whether a point already placed is within [param within] of [param p], at the same height
+## to within half a step.
+func _already_placed(p: Vector3, seen: Dictionary, positions: Array[Vector3], within: float) -> bool:
+	var cell := Vector2i(floori(p.x / spacing), floori(p.z / spacing))
+
+	for dx in range(-1, 2):
+		for dz in range(-1, 2):
+			var bucket: Variant = seen.get(cell + Vector2i(dx, dz))
+
+			if bucket == null:
+				continue
+
+			for index: int in (bucket as PackedInt32Array):
+				var other := positions[index]
+
+				if absf(other.y - p.y) <= spacing * 0.5 and Vector2(other.x - p.x, other.z - p.z).length() < within:
+					return true
+
+	return false
 
 
 func _blocked(p: Vector3) -> bool:
