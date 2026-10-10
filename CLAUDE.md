@@ -1,374 +1,61 @@
 # dot-npc
 
-**What an NPC is.** A catalogue of definitions, spawning with a population budget,
-health and damage, a perception layer that commits to a target, and navigation
-generated from the constants a code-built map was drawn from.
+**What an NPC is.** A catalogue of definitions, spawning with a population budget, health and damage, a perception layer that commits to a target, and navigation generated from the constants a code-built map was drawn from. 3D and 2D (the XZ plane).
 
-Depends on **dot-core and nothing else**. Not on dot-net, not on dot-combat, not on
-dot-map — each of those is a seam a host wires up, and naming any of them would make
-this addon fail to parse in a project that does not have it.
+Read the family [CLAUDE.md](../../CLAUDE.md) first; this file is only what is specific to NPCs. How one decides is dot-npc-ai; population and pacing are dot-npc-ai-director.
 
-## The one idea
+**Depends on dot-core and nothing else.** Not dot-net, dot-combat or dot-map: each is a seam a host wires up, and naming any of them would make this addon fail to parse in a project that does not have it.
 
-**An NPC is a definition, not a scene.** A director deciding whether it can afford four
-more zombies must answer that without loading four scenes, and a spawn menu of eighty
-entity kinds must not load eighty. So `DotNpcDef` carries the id, the scene path, the
-brain path, the cost, the health and the whole perception envelope as plain data, and
-the scene is loaded on the one occasion something is actually spawned.
+## Read before
 
-The consequence everything else follows from: **the brain is named by PATH, never by
-`class_name`.** A mounted dot-cloud pack arrives long after the project's script cache
-was built, so a `class_name` inside one resolves to nothing — measured, and in
-`game-dev/CLAUDE.md`. `extends "res://addons/dot_npc/runtime/dot_npc_brain.gd"` works
-in a build and in a pack; `extends DotNpcBrain` works in a build only. The fixture in
-`fixtures/walker_brain.gd` is deliberately written the supported way, so the suite
-cannot pass for a shape the addon does not support.
-
-## Server-authoritative, and not predicted
-
-Everything else in this family is built so a client can predict it. NPCs deliberately
-are not, and the reason is stronger than dot-props':
-
-An NPC's position is the output of a pathfinder over a graph, a steering pass and —
-for a rigid-body NPC — a physics solver. None of that is reproducible across machines:
-iteration order, island membership and the last bits of every float differ. Two runs of
-the same horde diverge within a second, so a predicted NPC is a **constantly corrected**
-NPC, which looks far worse than one interpolated a few tens of milliseconds behind.
-
-So the server owns every NPC, the client draws what it is told, and `DotNpcNetSync`
-says what crosses the wire. Its `apply()` carries the warning three games in this family
-have needed: never write a received position onto something the local machine is
-simulating. On a client every NPC is a mirror and it is always safe; the machine where
-it is wrong is the server, and a bridge running one code path for both would do it.
+| Read | Before |
+| --- | --- |
+| [docs/runtime.md](docs/runtime.md) | definitions and brains, authority and replication, perception, the limits, death and reclaim, unbinding, 2D, what is deliberately not here |
+| [docs/navigation.md](docs/navigation.md) | the builder, smoothing, filters, partial paths, cover, indexing at scale |
+| [docs/history.md](docs/history.md) | the bugs, and how each looked |
 
 ## Layout
 
-```
-addons/dot_npc/
-  core/
-    dot_npc_def.gd          One kind of NPC. Checkable without loading a scene.
-    dot_npc_catalogue.gd    Every kind a server offers. JSON an operator edits.
-    dot_npc_limits.gd       A DotConfig: population, pacing, perception, spawns.
-    dot_npc_instance.gd     One NPC in the world: node, health, target, brain.
-  runtime/
-    dot_npc_spawner.gd      The node a game adds. Spawn, sense, think, hurt, reclaim.
-    dot_npc_senses.gd       What it can perceive, and what it has committed to.
-    dot_npc_brain.gd        The class a game's NPC script extends, by path.
-  nav/
-    dot_npc_nav_data.gd     Where an NPC may stand, plus areas, flags, cover and
-                            the staleness digest.
-    dot_npc_nav_builder.gd  Generates that from a map's own constants.
-    dot_npc_nav_filter.gd   Which points one NPC may use and what they cost it.
-    dot_npc_nav_graph.gd    A* over it, smoothing, partial paths.
-    dot_npc_path.gd         A path being walked. Following is not searching.
-  net/
-    dot_npc_net_sync.gd     What replicates, as strings. Never names dot-net.
-```
-
-## Navigation was the first decision and it is not a free one
-
-Godot's own answer is `NavigationRegion3D` baking a `NavigationMesh` from source
-geometry at edit time. That is right for a game whose maps are authored in a scene, and
-**this family's are not**: every map here is a script that builds boxes from constants,
-so at edit time the scene is an empty node and there is nothing to bake.
-
-So navigation follows dot-timer's zones exactly. `DotNpcNavBuilder` takes the map's own
-walkable rectangles and obstacle boxes — *the same constants the geometry was built
-from* — and produces a point graph. `DotNpcNavData.source_digest` is a hash of those
-constants, and a game's suite fails when it no longer matches. **A navmesh that has
-drifted from its geometry is an NPC walking through a wall, and it is invisible until a
-person watches one do it.**
-
-That decision is also what makes a **delivered** map able to have NPCs at all. A map
-arriving in a mounted pack cannot be baked on the client — there is no editor there — so
-the nav data has to be content, in the pack, beside the zones.
-
-Three things about the builder that are not obvious:
-
-- **A height difference greater than half a spacing is not a neighbour.** Without it a
-  walkway passing over a floor joins to it and an NPC paths through the air. It is the
-  single commonest thing wrong with a generated graph and the suite has a two-storey
-  case for it.
-- **A stair built as steps is two disconnected graphs**, so `add_link()` is not
-  optional. A ramp is one floor and is fine; most stairs here are not ramps.
-- **Neighbours reach 1.5 spacings.** One spacing misses the diagonal by root two and
-  gives right-angled paths; two joins across a wall thin enough to hold no point.
-
-A game with authored geometry should use Godot's navigation instead, and nothing here
-stops it: a spawner with no nav data spawns anywhere, and a brain that owns a
-`NavigationAgent3D` paths with that. This exists so that a code-built map is not the one
-shape of map that cannot have NPCs.
-
-## What a path is worth, and the three things that decide it
-
-The graph half was a search and nothing else for its first pass: A*, a chain of grid
-points, and a follower that walked them. Everything below came out of reading
-[Recast & Detour](../../external-study/game-dev/navigation/recastnavigation) and
-a shipped engine's `nav_mesh` code, which are in `external-study` for exactly this and which had been
-read for nothing until now.
-
-### Smoothing, because a grid can only turn eight ways
-
-A two-metre grid crossing an open room produces a staircase — an NPC visibly zig-zags
-across ground with nothing in it, and it is the first thing anybody watching one
-notices. Detour solves the polygon version with the funnel algorithm
-(`dtFindStraightPath`); `dtPathCorridor::optimizePathVisibility` is the incremental
-form. `DotNpcNavGraph.smooth_path` is the point-graph version of the same idea: from
-each kept waypoint, reach as far ahead as is still walkable in a straight line and drop
-everything between.
-
-**The naive walkability test passes straight through walls, and it took the suite to
-say so.** "Is every sample along the line near some point" is true inside any wall thin
-enough to have graph points on both sides of it — a sample in the middle is within
-reach of the points beside it. The fix is not a tighter threshold, which only moves the
-wall thickness at which it breaks; it is to ask a different question. The **builder**
-already refused to connect two points whose straight line crossed an obstacle, so
-`can_walk_straight` walks the nearest-point sequence along the line and requires each
-step to be an edge the builder actually drew. Connectivity, not proximity, and the
-answer is exact rather than a margin.
-
-That is also why `DotNpcNavData.grid_spacing` exists. Sampling has to happen at under
-half a cell or the nearest point can skip one, and `point_radius` is not that number —
-it is how far off the mesh an NPC may stand, which a generator may set to anything.
-
-### Areas and flags, because "passable" is two questions
-
-`DotNpcNavFilter` is Detour's `dtQueryFilter` in the shape a point graph needs.
-
-- **Cost, for things that are passable and unpleasant.** A ban cannot express "go round
-  the water unless going round is much worse", and an NPC that will never step in water
-  stands at the edge of a puddle for ever when the puddle is the only way through. The
-  suite has both halves: at a cost of 20 it walks round, at 1.05 it wades.
-- **Flags, for things that are impassable to *this* NPC.** A crouch tunnel is a fact
-  about the map; whether it is a way through is a fact about what is trying to use it.
-  So the flag set lives on `DotNpcDef.nav_exclude_flags` and the spawner builds one
-  filter per kind — one graph serves every NPC on the map and they do not agree about
-  it.
-
-The filter is applied to the **start point** as well as to the search. Without that, an
-NPC standing at the mouth of a tunnel it may not use snaps onto a point it may not
-occupy, and every path from it fails at the first edge — which reads as a broken graph
-rather than as a filter doing its job.
-
-### Partial paths, because standing still is not an answer
-
-Detour returns its best guess with `DT_PARTIAL_RESULT` rather than nothing. `find_path`
-now does the same on request: the search already tracks the closest node it reached, so
-the partial path is free. `DotNpcPath.partial` carries it to the brain, because
-**following a partial path is correct and believing it ends at the goal is not** — a
-brain that cannot tell the difference repaths to an unreachable target for ever.
-
-The caller's own goal is deliberately *not* appended to a partial path. Appending it
-puts the unreachable position on the end of a path that stops short on purpose, and
-every follower walks the last leg straight through the wall.
-
-### Cover, because a runtime cannot raycast a map it was handed as a graph
-
-A shipped navigation mesh computes hiding spots at generation time and stores them; that is
-not an optimisation here, it is the only option. Nothing at runtime has the geometry —
-the map was built from constants and shipped as points — so if the generator does not
-write cover down, nothing can ever answer "where can I hide from that".
-
-`DotNpcNavData` keeps cover as its own list rather than as a point attribute, which is
-what Source does and for the same reason: the useful spot is the corner of an area, not
-its middle. Each spot records **the direction the wall lies in**, so the runtime
-question — "is this spot covered from over there" — is a dot product.
-
-`_mark_cover` records one spot per point, not one per obstacle. A point in an inside
-corner has two walls and would otherwise produce two spots in the same place; that is
-one place that is good against two directions, and the query picks the nearest wall to
-the threat anyway. Only `IN_COVER` is generated: sniper spots and exposed ledges need
-long visibility traces over the whole map, and a generator with the geometry in front
-of it can add them — the flags exist so it can.
-
-## Perception commits, and that is the whole class
-
-"Nearest visible enemy, recomputed every tick" is the classic broken NPC. Two players a
-metre apart make it turn back and forth for ever; one who steps behind a pillar makes it
-forget instantly and walk away mid-swing.
-
-`DotNpcSenses` therefore acquires at one threshold and drops at a weaker one:
-
-- **`switch_ratio` (0.6)** — a rival must be 40% nearer than the committed target before
-  the NPC will change its mind. The suite runs forty ticks of two candidates swapping
-  which is marginally nearer and asserts **zero** switches.
-- **`commitment_grace` (3 s)** — it keeps chasing a target it can no longer perceive,
-  measured from the *last sighting* rather than from acquisition. Without it a doorway
-  is a perfect escape.
-- **A perceived rival ends the grace immediately.** An NPC that ignored the player
-  hitting it in order to chase one that left is worse than either behaviour alone.
-- **Hearing is checked before sight**, ignores the cone and is usually shorter. An NPC
-  that only saw could be walked up behind for ever; one whose hearing equalled its sight
-  has no behind at all.
-
-Perception is also the single biggest cost in the addon, so it is **staggered**:
-`sense_period_ticks` spreads the passes across ticks, keyed on the NPC's position in the
-dictionary rather than on its instance id — ids from one allocation run are consecutive
-and would put a whole wave in the same slot, which is the spike again wearing the
-appearance of a fix.
-
-## The limits, and why each one exists
-
-Population is the whole cost of an NPC layer, and every number in `DotNpcLimits` exists
-because a server without it has the same evening.
-
-| | |
+| Path | What |
 | --- | --- |
-| `world_budget` | Counted in `DotNpcDef.cost`, not in bodies. A shambler and a boss do not cost the same. |
-| `per_kind_cap` | A budget alone lets a director spend the whole thing on whatever is cheapest, which is how a horde game ends up as ninety identical crawlers. |
-| `spawn_interval` | A budget does not stop a runaway director: one that kills one and spawns one can churn as fast as the tick. |
-| `burst_cap` | The difference between a director asking for a wave and a bug asking for ten thousand. |
-| `reclaim_distance` / `reclaim_grace` | Distance rather than a timer, because the ones that accumulate are the ones left behind. The grace is what stops a player backing through a doorway from deleting the thing chasing them. |
-| `sense_period_ticks` | Four ticks at 64 Hz is 60 ms of staleness, which nobody has ever noticed in a zombie. |
-| `require_navigable_spawn` | An NPC spawned off the graph has nowhere to path from and stands still for ever, which reads as a broken brain rather than as a bad spawn point. |
+| `addons/dot_npc/core/` | `DotNpcDef` (one kind, checkable without loading a scene), `DotNpcCatalogue` (JSON an operator edits), `DotNpcLimits` (a `DotConfig`), `DotNpcInstance` (one NPC in the world) |
+| `addons/dot_npc/runtime/` | `DotNpcSpawner` (the node a game adds: spawn, sense, think, hurt, reclaim), `DotNpcSenses`, `DotNpcBrain` (extended by path) |
+| `addons/dot_npc/nav/` | `DotNpcNavData` (points, areas, flags, cover, digest), `DotNpcNavBuilder`, `DotNpcNavFilter`, `DotNpcNavGraph` (A*, smoothing, partial paths), `DotNpcPath` |
+| `addons/dot_npc/net/` | `DotNpcNetSync`: what replicates, as strings; never names dot-net |
+| `fixtures/` | bodies (3D and 2D) and brains for the suite, written the pack-safe way |
+| `examples/npc_selftest.tscn` | the suite |
 
-**`require_navigable_spawn` with no nav data allows every spawn.** No navigation is not
-the same as "off the navigation": a flat arena, a 2D game or one using Godot's own
-navigation has no `DotNpcNavData` and every point in it is legal. Refusing there would
-make the setting mean "no NPCs on a map with no nav data", which is a server with no
-NPCs and a setting that reads as though it should be on.
+## Running and testing
 
-## Dying and being reclaimed are not the same event
+- Link `addons/dot_core` once ([development setup](../../docs/development-setup.md)), then the family's two steps ([game-dev/CLAUDE.md](../../CLAUDE.md#validating-anything)) and `timeout 120 godot --headless --path . res://examples/npc_selftest.tscn`. Exits non-zero on failure.
+- The games that run NPCs (game-arena, game-g2gfast, game-playground, game-zombie-zone, game-hungario in 2D) are where most of this addon's bugs were found; run the ones a change touches.
 
-`died` fires while the node still exists, names who did it, and is what a scoring layer
-listens to. `removed` fires for every departure including a director tidying up
-something nobody could see. A game with only `removed` would either award a kill for the
-tidy-up or have to guess.
+## Rules that bite
 
-Health is handled here when dot-combat is absent and handed to it when it is present,
-without this addon ever naming dot-combat: a game with combat calls `report_death()`
-from its own health component, a game without it calls `damage()`, and both end at the
-same signal.
+**Definitions and runtime**
 
-## Four bugs the suite found while this was being written
+- A brain is named by PATH in the definition and extends by path, never `class_name`: a mounted pack's globals do not register. [runtime](docs/runtime.md#an-npc-is-a-definition-not-a-scene)
+- NPCs are server-authoritative and never predicted. Never write a received position onto something this machine simulates (`DotNpcNetSync.apply`). [runtime](docs/runtime.md#server-authoritative-and-not-predicted)
+- `face(d)` is `look_at(position + d)`; `yaw_of` is `rotation.y`. Change one and the round-trip check must still pass. [runtime](docs/runtime.md#face-and-facing-agree)
+- Perception commits: `switch_ratio` 0.6, `commitment_grace` 3 s from the last sighting, a perceived rival ends the grace, hearing before sight. [runtime](docs/runtime.md#perception-commits-and-that-is-the-whole-class)
+- Sight lines start at `eye_height`, never the feet. [runtime](docs/runtime.md#perception-commits-and-that-is-the-whole-class)
+- Stagger keys on dictionary position, never instance id. [runtime](docs/runtime.md#perception-commits-and-that-is-the-whole-class)
+- `engaged_at` (busy; refreshed every pass) is not `target_since` (reaction clock; set on change only). [runtime](docs/runtime.md#engaged_at-and-target_since-are-different-questions)
+- `sight_scale` scales sight only, never hearing. [runtime](docs/runtime.md#sight_scale-is-per-npc-the-definitions-range-per-kind)
+- `require_navigable_spawn` with no nav data allows every spawn; judging a spawn uses `nearest_point()`, never `snap()`. [runtime](docs/runtime.md#the-limits-and-why-each-one-exists)
+- `died` is a kill, `removed` is any departure. [runtime](docs/runtime.md#dying-and-being-reclaimed-are-not-the-same-event)
+- The spawner `unbind()`s every brain on `remove()` and on its own `NOTIFICATION_PREDELETE` (not `_exit_tree`); a brain subclass drops what it built in `_npc_unbound()`. [runtime](docs/runtime.md#a-brain-and-its-npc-point-at-each-other-so-the-spawner-lets-go-of-both)
+- 2D is `Vector3(x, 0, y)`; `two_dimensional` is one flag; `spawn`/`spawn_2d` refuse the wrong body and free it; a 2D definition sets `require_line_of_sight = false`. [runtime](docs/runtime.md#2d-a-2d-world-is-the-xz-plane)
 
-All four parsed cleanly. All four are shapes `game-dev/CLAUDE.md` already names.
+**Navigation**
 
-- **`PackedInt32Array` is a value type**, so `_adjacency[a].append(b)` in
-  `DotNpcNavGraph.rebuild` appended to a copy and every adjacency list stayed empty.
-  Every edge was in the data, `edge_count()` was right, and `find_path` returned empty
-  for every pair of points — with nothing erroring, because an empty adjacency list is
-  a legitimate thing for an isolated point to have. The two-storey test *passed* while
-  this was broken, because it asserts that a path is **not** found: **a test that passes
-  for the wrong reason is worse than one that fails.**
-- **`DotNpcNavData.snap()` returns the point it was handed when nothing is near it**,
-  which is right for a caller nudging a position and exactly wrong for
-  `DotNpcSpawner.place()` deciding whether a spawn is legal — the distance from a point
-  to itself is zero, so a spawn two hundred metres off the graph measured as perfect.
-  It asks `nearest_point()` for an index now.
-- **`DotNpcBrain._npc_damaged` was declared, documented and called by nothing.** The
-  family's most repeated bug, in a brand new addon. An NPC that never flinches, never
-  calls for help and never flees, with no error anywhere. The suite asserts the *hook*
-  rather than the signal, which is the only reason it was visible.
-- **`String(PackedStringArray)` is not a constructor**, so the digest helper did not
-  compile — and its fix carried a second one: the parts are joined with a separator now,
-  because concatenating them lets `[1.0, 23.0]` and `[12.0, 3.0]` collide, and two
-  different maps sharing a digest is a stale navmesh reporting itself fresh.
-
-And one in the suite itself, worth as much: **an un-awaited call to a coroutine returns
-at its first `await`**, so `_test_no_leaked_nodes()` was scheduled to finish after
-`get_tree().quit()` and never reported. It looked like a passing suite that was quietly
-one check short.
-
-## An NPC is not always a 3D one, and a 2D world is the XZ plane
-
-`DotNpcSpawner.spawn` places a `Node3D` and `spawn_2d` places a `Node2D`. Everything
-either side of that — the catalogue, the population budget, the per-kind cap, the spawn
-interval, the perception, the commitment, the reclaim and the brain — is the same code,
-because none of it is about dimension.
-
-**The mapping is one line: a 2D point `(x, y)` is `Vector3(x, 0, y)`.** That is what lets
-the rest stay unchanged. `DotNpcSenses` compares 3D distances, `DotNpcAiSteering` returns
-3D directions, and `DotNpcNavData` is a graph of 3D points — all of which are exactly
-right on a plane where one component never moves, and all of which would have to be
-rewritten for a `Vector2`. `DotNpcInstance.to_plane` / `from_plane` are the conversion and
-`position()` answers in the plane for either kind of body, so nothing downstream has to
-know which it is looking at.
-
-`DotNpcInstance.node` is therefore typed **`Node`**. `position()`, `facing()` and
-`DotNpcBrain.steer_toward` / `face` / `halt` all branch on the body: a `RigidBody2D` gets
-a velocity, a `CharacterBody2D` gets `move_and_slide`, and a plain `Node2D` is moved.
-There is no gravity in the 2D branch, because a top-down world has none.
-
-**A 2D definition should set `require_line_of_sight = false`.** There is no 3D physics
-world to cast through; `_has_line_of_sight` answers "clear" rather than blinding every NPC
-in the game, and saying so in the definition makes it a decision rather than a fallback
-nobody noticed. A 2D game that wants occlusion does the test itself, which is what the
-flag has always been for.
-
-**`two_dimensional` is one flag rather than a 2D twin of everything that takes a point.**
-It is set once beside `authoritative`, because a spawner serves one world and a world has
-one dimension. `spawn_group` reads it — a group is a ring of offsets and a count, and a
-second copy of the ring arithmetic is a second place the deterministic layout could drift
-— and so does `DotNpcDirector`, which is otherwise the one place a 2D game would have had
-to fork an addon to change a single call. `spawn` and `spawn_2d` stay separate and are
-*not* switched by it: a caller holding a `Vector3` and one holding a `Vector2` are
-different callers, and a signature that took either would take anything.
-
-**Asking for the wrong dimension is refused without leaking.** A 3D NPC through `spawn_2d`
-and a 2D one through `spawn` both return null, and the instantiated scene is freed — a
-scene built and then rejected is a leaked node nothing reports. The suite checks the child
-count either side of both refusals.
-
-## `face` and `facing` disagreed by half a turn
-
-`DotNpcBrain.face(d)` did `look_at(position - d)`. `look_at` points -Z at its target and `facing()` reads -Z, so after facing a direction an NPC reported facing the opposite one: every 3D NPC's sight cone pointed behind it while it chased, and game-arena's monsters, with 60-to-100-degree cones, kept losing the player they were running at. `DotNpcNetSync.yaw_of` was half a turn out the other way (`atan2(f.x, f.z)` for a -Z facing), so a client applying the replicated yaw drew the NPC the right way round and nobody saw anything wrong. Both are fixed together — `look_at(position + d)`, and `yaw_of` returns the node's own `rotation.y` — and the replication section asserts the round trip: told to face +X, an NPC faces +X, and a client given its yaw faces +X too. Found by dot-npc-ai's turn-rate check, which asked how far an NPC had turned in one tick and was told 180 degrees.
-
-## `sight_scale` is per NPC, and the definition's range is per kind
-
-`DotNpcInstance.sight_scale` multiplies `DotNpcDef.sight_range` for one NPC. How far a kind can see belongs in the catalogue; how attentive this one is belongs to its character, and dot-npc-ai's brain writes the character's `alertness` here — which until this field existed was declared on every character and read by nothing. Sight only: hearing is a loudness the game measured, and scaling it would be an NPC that hears a footstep further than the footstep travels.
-
-## `engaged_at` and `target_since` are different questions
-
-Both are simulated seconds and both are about a target, and they answer opposite things:
-
-| | |
-| --- | --- |
-| `engaged_at` | **Refreshed on every pass in which the target is perceived.** "Is this NPC still busy?" — what `DotNpcLimits.reclaim_grace` is measured from. |
-| `target_since` | **Set when `target_id` changes, and not while it is held.** "How long has it known about this one?" — what a reaction time is measured from. |
-
-`target_since` exists because dot-npc-ai measured a reaction time against `engaged_at` and
-therefore never finished reacting: `now - engaged_at` is approximately zero on every tick
-an NPC can see somebody, so `has_reacted()` was false for ever and every branch behind it
-never ran. Nothing errored — a bot that never acts on what it sees looks like a bot that is
-bad rather than like one that is broken.
-
-The subtle half is the case that looks like a new commitment and is not: **re-perceiving
-the same target after a gap**. `update_target` only moves `target_since` when the id
-actually changes, because restarting the clock there is an NPC that never finishes reacting
-to somebody who keeps stepping behind a pillar.
-
-## A brain and its NPC point at each other, so the spawner lets go of both
-
-`DotNpcBrain.npc` holds the instance and the instance's `brain` holds the brain; `DotNpcAiBrain.context` holds a context whose `brain` holds the brain back. Two `RefCounted`s that point at each other are never freed, and `remove()` used to clear one end of the first pair and neither end of the second — which read exactly like the fix. The path that leaks hardest never calls `remove()` at all: a world is torn down by freeing its nodes. So `DotNpcBrain.unbind()` clears `npc`, `director` and `path` after calling `_npc_unbound()`, where a subclass drops whatever it built around them (`DotNpcAiBrain` drops its context, tree, machine and blackboard), and the spawner calls it from `remove()` and, for every NPC still alive, from its `NOTIFICATION_PREDELETE` — not `_exit_tree`, because a spawner reparented during a map change must keep its NPCs thinking. Measured in game-g2gfast's `dedicated`: eleven brains, contexts and tree nodes alive at exit before, none after. `DotVehicleSpawner._unbind` is the same shape for the same reason.
-
-## A campaign map is thousands of points, and three loops were written for hundreds
-
-The builder compared every point with every other, asked every obstacle about every point, the lookup scanned every point for the nearest, and A* scanned its open list linearly, with a note to revisit it "if a map ever ships thousands of points". game-zombie-zone's maps do (a 120 by 80 metre street at one metre is over six thousand), and forty zombies repathing every second and a half spent a server's tick in those loops. All four are indexed now: points by (x, z) bucket in `DotNpcNavData` (built lazily, dropped by `add_point`, `validate` and `invalidate_index`), obstacles by cell in the builder, neighbours by bucket, and A*'s open list is a binary heap ordered by priority then push order.
-
-**Two points were "the same place" if they rounded to the same grid key, and that split graphs at doorways.** Floors laid from different corners have grids offset by a fraction of a step, and a room's last row and a street's first, 0.9 m apart, rounded together; one was dropped and the room was cut off from the street (game-zombie-zone's start room: stand-ins that would not leave it, specials that could not get in). The de-duplication is by distance now, half a step. "navigation builder" has a room, a door and a street laid from three corners; armed by making "the same place" 0.95 of a step, it fails.
-
-**Every NPC on a floor with line of sight on was blind.** The sight line started at `npc.position()`, which is the feet, which is on the floor — and a ray that starts on a surface hits it at distance zero, so `_has_line_of_sight` answered "blocked" for every candidate. game-arena had line of sight off for another reason and never met it; game-zombie-zone's idle commons found it by never noticing a survivor standing in front of them. `DotNpcDef.eye_height` (1.5 m by default, `"eye"` in a catalogue) is where the line starts now. "senses" puts an NPC on a slab and checks it sees in front and not through a wall; armed by casting from the feet again.
-
-**An unreachable goal is the most expensive question a graph can be asked, and a crowd asks it every tick.** A* proves a goal unreachable by visiting everything the start can reach, and a follower that had walked its partial path to the end treated "finished" as "repath now" — so forty zombies piled against a shut gate each searched half a campaign map every tick, and a server spent 100 ms a tick doing it. Two changes: `DotNpcPath.needs_repath` lets a finished PARTIAL path wait for the interval (or for the goal to move) like any other, and `DotNpcNavGraph` labels its connected pieces at `rebuild`, so a goal in another piece goes straight to the nearest point in the start's piece — the point the full search would have stopped at — without the search. The shortcut is filter-blind and steps aside when a filter is set. "navigation partial paths" checks both, the first armed by making a finished path always repath.
-
-**The answers are the scan's answers, ties included.** The lowest index still wins at an equal distance, and the edges are still connected in the same order, because a follower that snapped to a different one of two equidistant points depending on how an index was laid out would path differently on two machines. "navigation at scale" in the suite compares 300 random lookups with a brute-force scan; armed by skipping one column of buckets, 22 of them differed.
-
-## Validating
-
-```bash
-cd godot/dot-npc
-ln -s ../../dot-core/addons/dot_core addons/dot_core   # once
-
-godot --headless --path . --import
-find . -name '*.gd' -not -path './.godot/*' -not -path './addons/dot_core/*' | \
-  while read f; do godot --headless --path . --check-only --script "res://${f#./}"; done
-
-timeout 120 godot --headless --path . res://examples/npc_selftest.tscn
-```
-
-203 checks. Exits non-zero on failure. Run the `--check-only` pass first: a scene whose
-script fails to parse **hangs** rather than failing.
+- Nav data is generated from the map's constants and checked by `source_digest` in the game's suite; a drifted navmesh is an NPC in a wall. [navigation](docs/navigation.md#generated-from-the-maps-constants-not-baked)
+- Builder: height gap over half a spacing is not a neighbour; stairs of steps need `add_link()`; neighbours reach 1.5 spacings; "the same place" is by distance. [navigation](docs/navigation.md#the-builder)
+- `can_walk_straight` asks connectivity (edges the builder drew), never proximity. [navigation](docs/navigation.md#smoothing-because-a-grid-can-only-turn-eight-ways)
+- Filters apply to the start point too; flags are per kind (`nav_exclude_flags`), costs per area. [navigation](docs/navigation.md#areas-and-flags-because-passable-is-two-questions)
+- A partial path never has the goal appended; a finished partial path waits for its interval; unreachable goals are answered from the component labels. [navigation](docs/navigation.md#partial-paths-because-standing-still-is-not-an-answer)
+- Indexed lookups must return the brute-force scan's answer, ties included (lowest index wins). [navigation](docs/navigation.md#at-scale)
+- `PackedInt32Array` in a dictionary or array is a copy; append through a local and write it back. [history](docs/history.md)
 
 ## Where a game plugs in
 
@@ -378,8 +65,8 @@ script fails to parse **hangs** rather than failing.
 | An NPC in a 2D world | `DotNpcSpawner.spawn_2d`, plus `two_dimensional`. See game-hungario |
 | How one decides | `DotNpcBrain` subclass, named by path in the definition |
 | How many there may be | `DotNpcLimits`, layered like every `DotConfig` |
-| What an NPC can perceive | `DotNpcSenses.switch_ratio` / `commitment_grace`, and the per-definition sight and hearing |
-| What it perceives | `DotNpcSpawner.set_candidates` — id, position, faction, loudness |
+| What an NPC can perceive | `DotNpcSenses.switch_ratio` / `commitment_grace`, and the per-definition sight, hearing and `eye_height` |
+| What it perceives | `DotNpcSpawner.set_candidates`: id, position, faction, loudness |
 | Where it may stand | `DotNpcNavData`, generated by `DotNpcNavBuilder` from the map's constants |
 | What one area of the map costs to cross | `DotNpcNavFilter.set_area_cost`, per NPC |
 | What one kind of NPC cannot traverse | `DotNpcDef.nav_exclude_flags` |
@@ -389,26 +76,4 @@ script fails to parse **hangs** rather than failing.
 | What replicates | `DotNpcNetSync.specs()`, resolved by the game's bridge |
 | Who a kill belongs to | the `by` on `damage()` / `report_death()` |
 
-## Things deliberately not here
-
-- **No behaviour tree, no state machine, no utility scoring.** That is `dot-npc-ai`,
-  a separate addon, so a game that wants a catalogue and a budget does not install a
-  decision engine it will not use.
-- **No population director.** That is `dot-npc-ai-director`.
-- **No animation.** A `DotNpcNetSync.State` is what a client picks one with; picking it
-  is the game's.
-- **No melee, no ranged attacks, no damage types.** dot-combat is where a weapon lives,
-  and an NPC that swings is a brain calling into it.
-- **No flying and no swimming.** `DotNpcNavBuilder` generates a walkable graph. A flying
-  NPC needs no graph and should steer directly; nothing stops one.
-- **No crowd avoidance.** Two NPCs pathing to the same point will stand in each other.
-  A separation pass belongs with steering, which is `dot-npc-ai`'s.
-- **No dynamic obstacles.** A door that closes does not re-cut the graph. Detour has
-  `dtTileCache` for it; here the honest answer is a `Flag.DOOR` on the points under the
-  door and a filter per NPC, which says who may use it and not whether it is open.
-- **No sniper spots or exposed ledges.** The `Cover` flags are defined and only
-  `IN_COVER` is generated, because the other two need visibility traces over the whole
-  map and the builder only knows boxes.
-- **No 2D.** The nav data, the senses and the brain are all `Vector3`. dot-2d's games
-  would want a `Dot2DNpc*` family, exactly as dot-timer is dimension-agnostic and
-  dot-player-controller is not.
+Deliberately not here: decisions (dot-npc-ai), a population director, animation, attacks and damage types (dot-combat), flying and swimming, crowd avoidance, dynamic obstacles, sniper spots. [runtime](docs/runtime.md#deliberately-not-here), [navigation](docs/navigation.md#not-here)

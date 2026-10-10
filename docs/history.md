@@ -1,0 +1,15 @@
+# History
+
+Bugs worth recognising if they come back. All parsed cleanly and none errored. The rule each left is in [runtime.md](runtime.md) or [navigation.md](navigation.md).
+
+- **`PackedInt32Array` is a value type**, so `_adjacency[a].append(b)` in `DotNpcNavGraph.rebuild` appended to a copy and every adjacency list stayed empty. Every edge was in the data, `edge_count()` was right, and `find_path` returned empty for every pair, with nothing erroring because an empty adjacency list is legitimate for an isolated point. The two-storey test *passed* while this was broken, because it asserts that a path is **not** found: **a test that passes for the wrong reason is worse than one that fails.**
+- **`snap()` judged spawns**: it returns the point it was handed when nothing is near, so a spawn two hundred metres off the graph measured as perfect.
+- **`DotNpcBrain._npc_damaged` was declared, documented and called by nothing.** An NPC that never flinches, never calls for help and never flees, with no error anywhere.
+- **`String(PackedStringArray)` is not a constructor**, so the digest helper did not compile; its fix also added the separator that stops `[1.0, 23.0]` and `[12.0, 3.0]` colliding.
+- **In the suite: an un-awaited call to a coroutine returns at its first `await`**, so `_test_no_leaked_nodes()` finished after `get_tree().quit()` and never reported. It looked like a passing suite quietly one check short.
+- **`face` and `facing` disagreed by half a turn.** `face(d)` did `look_at(position - d)`, so every 3D NPC's sight cone pointed behind it while it chased, and game-arena's monsters (60-to-100-degree cones) kept losing the player they were running at. `DotNpcNetSync.yaw_of` was half a turn out the other way (`atan2(f.x, f.z)` for a -Z facing), so clients drew NPCs the right way round and nobody saw anything wrong. Found by dot-npc-ai's turn-rate check, told an NPC had turned 180 degrees in one tick.
+- **Brains leaked at exit.** `remove()` cleared one end of the brain/instance cycle and neither end of the brain/context one, which read exactly like the fix; and a world torn down by freeing nodes never calls `remove()`. Measured in game-g2gfast's `dedicated` by counting brains, contexts and tree nodes alive at exit.
+- **Three loops written for hundreds of points met a map with thousands** (game-zombie-zone's), and a server's tick went into the builder, the nearest-point lookup and a linear A* open list.
+- **De-duplicating points by rounded grid key split graphs at doorways**: game-zombie-zone's start room was cut off from the street (stand-ins that would not leave it, specials that could not get in). Armed by making "the same place" 0.95 of a step, the builder case fails.
+- **Every NPC on a floor with line of sight on was blind**, because the ray started at the feet. game-arena had line of sight off for another reason and never met it; game-zombie-zone's idle commons found it by never noticing a survivor in front of them.
+- **Forty zombies piled against a shut gate each searched half a campaign map every tick** (100 ms a tick), because a follower at the end of a partial path treated "finished" as "repath now".
