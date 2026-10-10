@@ -88,7 +88,16 @@ func advance(position: Vector3, fallback: Vector3 = Vector3.ZERO) -> Vector3:
 ## Both conditions matter and neither alone is enough: the interval catches a world
 ## that changed around a stationary goal, and the drift catches a goal that ran.
 func needs_repath(now: float, goal: Vector3, interval: float, drift: float) -> bool:
-	if is_empty() or is_finished():
+	if is_empty():
+		return true
+
+	# A partial path walked to its end is an NPC standing at the near side of something it
+	# cannot get through. Searching again at once finds the same partial path, and searching
+	# for an unreachable goal is the most expensive question a graph is ever asked — forty
+	# zombies piled against a shut gate were each asking it every tick, which was most of a
+	# second of server time a second (game-zombie-zone). It waits for the interval, or for the
+	# goal to move, like any other path.
+	if is_finished() and not partial:
 		return true
 
 	if interval > 0.0 and now - computed_at >= interval:

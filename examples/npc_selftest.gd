@@ -18,7 +18,7 @@ const BODY := "res://fixtures/npc_body.tscn"
 const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 
-const CHECKS := 218
+const CHECKS := 221
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
@@ -792,6 +792,26 @@ func _test_nav_partial() -> void:
 	var reachable := graph.find_path(from, Vector3(-8, 0, 4), 3.0, true)
 	_check(not reachable.is_empty(), "a reachable goal is unaffected")
 	_check(not graph.last_partial, "and is not reported as partial")
+
+	# The shortcut for a goal in another piece of the graph must end where a full search does.
+	# A neutral filter turns the shortcut off (it is filter-blind), so the search runs.
+	graph.filter = DotNpcNavFilter.neutral()
+	var searched := graph.find_path(from, to, 3.0, true)
+	graph.filter = null
+	_check(not searched.is_empty() and searched[searched.size() - 1].distance_to(end) < 0.01,
+		"the shortcut ends where a full search does",
+		"%s against %s" % [str(end), str(searched[searched.size() - 1]) if not searched.is_empty() else "nothing"])
+
+	# Walked to the end of a partial path, a follower waits for the interval before searching
+	# again; forty zombies at a shut gate searching every tick was most of a server's second.
+	var follower := DotNpcPath.new()
+	follower.set_points(partial, 10.0, to)
+	follower.partial = true
+	follower.index = partial.size()
+	_check(not follower.needs_repath(10.5, to, 1.5, 2.5),
+		"a partial path walked out does not search again at once")
+	_check(follower.needs_repath(11.6, to, 1.5, 2.5),
+		"but does once the interval is up")
 	_done()
 
 

@@ -97,7 +97,79 @@ func rebuild(p_data: DotNpcNavData) -> DotResult:
 		from_b.append(a)
 		_adjacency[b] = from_b
 
+	_label_components()
 	return DotResult.success(self)
+
+
+## Which connected piece of the graph each point is in, by flood fill. Filter-blind: an NPC
+## whose filter cuts a piece in two still gets the right answer from [method _search], just
+## not this shortcut.
+var _component: PackedInt32Array = PackedInt32Array()
+
+
+func _label_components() -> void:
+	_component = PackedInt32Array()
+	_component.resize(data.points.size())
+	_component.fill(-1)
+	var label := 0
+
+	for seed_index in data.points.size():
+		if _component[seed_index] >= 0:
+			continue
+
+		var stack := PackedInt32Array([seed_index])
+		_component[seed_index] = label
+
+		while not stack.is_empty():
+			var at := stack[stack.size() - 1]
+			stack.resize(stack.size() - 1)
+
+			for next in neighbours(at):
+				if _component[next] < 0:
+					_component[next] = label
+					stack.append(next)
+
+		label += 1
+
+
+## Whether two points are in the same connected piece of the graph.
+func connected(a: int, b: int) -> bool:
+	if a < 0 or b < 0 or a >= _component.size() or b >= _component.size():
+		return false
+
+	return _component[a] == _component[b]
+
+
+## The point in [param start]'s piece of the graph nearest [param to]: where a partial path to
+## an unreachable goal ends. The same point a full search would have stopped at, found without
+## searching everything the start can reach.
+func _nearest_in_component(start: int, to: Vector3) -> int:
+	var label := _component[start]
+	var radius := maxf(data.spacing(), 1.0) * 2.0
+
+	while radius < 4096.0:
+		var best := -1
+		var best_sq := INF
+
+		for index in data.points_within(to, radius):
+			if _component[index] != label:
+				continue
+
+			if filter != null and not filter.passes(data.area_of(index), data.flags_of(index)):
+				continue
+
+			var d := data.points[index].distance_squared_to(to)
+
+			if d < best_sq or (d == best_sq and index < best):
+				best_sq = d
+				best = index
+
+		if best >= 0:
+			return best
+
+		radius *= 2.0
+
+	return start
 
 
 func is_ready() -> bool:
@@ -139,6 +211,27 @@ func find_path(
 		out.append(from)
 		out.append(to)
 		return out
+
+	# A goal in another piece of the graph cannot be reached, and finding that out by search
+	# visits every point the start can reach. Straight to the partial answer instead.
+	if filter == null and not _component.is_empty() and not connected(start, goal):
+		failures += 1
+
+		if not allow_partial:
+			return out
+
+		var nearest := _nearest_in_component(start, to)
+
+		if nearest == start:
+			return out
+
+		var partial := find_path(from, data.points[nearest], snap_radius, false)
+		last_partial = true
+
+		if partial.size() > 0:
+			partial.remove_at(partial.size() - 1)
+
+		return partial
 
 	var result := _search(start, goal)
 	var came_from: Dictionary = result["came_from"]
