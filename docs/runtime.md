@@ -45,6 +45,12 @@ Perception is the single biggest cost in the addon, so it is **staggered**: `sen
 
 Measuring a reaction time from `engaged_at` never finishes reacting (dot-npc-ai's `has_reacted()` was false for ever that way). The subtle half: **re-perceiving the same target after a gap** is not a new commitment, so `update_target` only moves `target_since` when the id actually changes; restarting the clock there is an NPC that never finishes reacting to somebody who keeps stepping behind a pillar.
 
+## An NPC's seed is per spawn, never its object id
+
+`DotNpcInstance.instance_id` is the engine's object id, and it is an identity: every spawner, director and game bridge keys by it, and it stays that. It is not a seed, because the engine hands ids out in allocation order: one more object created anywhere earlier in the process moves every NPC's id, and every choice drawn from it moves too. Behaviour then differs between builds and between a recorded run and its replay, and a timing check flips on a commit that touched nothing it measured.
+
+`DotNpcInstance.seed` is the seed. The spawner sets it before the brain is bound, so the brain's first choice already sees it: `DotRandomStream.new(seed_base).stream_for(&"npc", n).range_i_at(0, 2, 0x7FFFFFFF)`, where `n` is the spawner's count of adopted spawns. If the game assigns `seed_source` (`func(npc) -> int`, typically opening its `DotEntityTable` entry and returning the id), a non-zero answer is used instead, on the `&"npc_id"` stream so it cannot collide with a spawn count. The seed is always above 1 because dot-npc-ai reads 0 and 1 as "still the preset's seed"; 0 means an NPC built by hand that nobody seeded. `seed_base` is the session: a game sets it from its match seed, and a replay sets the recorded one. The counter is never reset, so a second round on the same spawner does not replay the first. A `Callable` rather than a `DotEntityTable` field, because naming dot-entity would make this addon fail to parse without it.
+
 ## The limits, and why each one exists
 
 Population is the whole cost of an NPC layer, and every number in `DotNpcLimits` exists because a server without it has the same evening.

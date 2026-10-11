@@ -39,6 +39,7 @@ Read the family [CLAUDE.md](../../CLAUDE.md) first; this file is only what is sp
 - `face(d)` is `look_at(position + d)`; `yaw_of` is `rotation.y`. Change one and the round-trip check must still pass. [runtime](docs/runtime.md#face-and-facing-agree)
 - Perception commits: `switch_ratio` 0.6, `commitment_grace` 3 s from the last sighting, a perceived rival ends the grace, hearing before sight. [runtime](docs/runtime.md#perception-commits-and-that-is-the-whole-class)
 - Sight lines start at `eye_height`, never the feet. [runtime](docs/runtime.md#perception-commits-and-that-is-the-whole-class)
+- Seed choices from `npc.seed`, never `instance_id` or `get_instance_id()`: the object id moves when anything else is allocated first. `instance_id` stays the identity. [runtime](docs/runtime.md#an-npcs-seed-is-per-spawn-never-its-object-id)
 - Stagger keys on dictionary position, never instance id. [runtime](docs/runtime.md#perception-commits-and-that-is-the-whole-class)
 - `engaged_at` (busy; refreshed every pass) is not `target_since` (reaction clock; set on change only). [runtime](docs/runtime.md#engaged_at-and-target_since-are-different-questions)
 - `sight_scale` scales sight only, never hearing. [runtime](docs/runtime.md#sight_scale-is-per-npc-the-definitions-range-per-kind)
@@ -74,6 +75,7 @@ Read the family [CLAUDE.md](../../CLAUDE.md) first; this file is only what is sp
 | Where cover is | `DotNpcNavBuilder.generate_cover` / `cover_range`, or `DotNpcNavData.add_cover` from a generator that has the geometry |
 | Where NPCs are added | `DotNpcSpawner.world_ref`, a `DotNodeRef` |
 | What replicates | `DotNpcNetSync.specs()`, resolved by the game's bridge |
+| What an NPC's choices are seeded from | `DotNpcSpawner.seed_base` (the session) and `seed_source` (the game's own number, e.g. its entity id) |
 | Who a kill belongs to | the `by` on `damage()` / `report_death()` |
 
 Deliberately not here: decisions (dot-npc-ai), a population director, animation, attacks and damage types (dot-combat), flying and swimming, crowd avoidance, dynamic obstacles, sniper spots. [runtime](docs/runtime.md#deliberately-not-here), [navigation](docs/navigation.md#not-here)

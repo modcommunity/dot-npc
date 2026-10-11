@@ -95,6 +95,31 @@ const REASON_ADMIN := &"admin"
 ## a signature that took either would be a signature that takes anything.
 @export var two_dimensional: bool = false
 
+@export_group("Randomness")
+
+## The session's seed for NPC choices: every NPC's [member DotNpcInstance.seed] is derived
+## from it.
+##
+## A game sets it from its own session or match seed (a [DotRandomStream] it already keeps,
+## or a seed an operator chose) so a replay can be given the recorded run's. Left at zero,
+## every server makes the same choices for the same sequence of spawns, which is
+## reproducible and is what a suite wants.
+@export var seed_base: int = 0
+
+## The game's own stable number for an NPC, or none. `func(npc: DotNpcInstance) -> int`.
+##
+## Called once per spawn, after the node is in the world and before the brain is bound, so
+## a brain's first choice already sees the result. The usual answer is the NPC's entity id:
+## a game that opens its `DotEntityTable` entry here and returns the id seeds each NPC from
+## the number the rest of the game knows it by. Zero (or no callable) falls back to this
+## spawner's own count of spawns. Typed as a [Callable] because naming dot-entity would make
+## this addon fail to parse without it.
+##
+## [b]Never return [code]node.get_instance_id()[/code].[/b] An engine object id depends on how
+## many objects the process created first, which is the bug [member DotNpcInstance.seed]
+## exists to fix.
+var seed_source: Callable = Callable()
+
 @export_group("Navigation")
 
 ## Remove the corners the grid put in a path that the world does not have.
@@ -164,6 +189,10 @@ var _ticks: int = 0
 var _world: Node = null
 
 var spawn_count: int = 0
+
+## Spawns adopted so far, the fallback subject of [method seed_for]. Never reset, so a
+## second round on the same spawner does not replay the first round's choices.
+var _spawn_serial: int = 0
 var refusal_count: int = 0
 var kill_count: int = 0
 var reclaim_count: int = 0
@@ -564,6 +593,8 @@ func _adopt(def: DotNpcDef, body: Node, owner_id: StringName) -> DotNpcInstance:
 	npc.engaged_at = _now
 	npc.health = def.max_health
 
+	npc.seed = _seed_npc(npc)
+
 	_npcs[npc.instance_id] = npc
 	_by_kind[def.id] = int(_by_kind.get(def.id, 0)) + 1
 
@@ -590,6 +621,33 @@ func _adopt(def: DotNpcDef, body: Node, owner_id: StringName) -> DotNpcInstance:
 	spawned.emit(npc)
 
 	return npc
+
+
+## The seed an NPC gets for [param subject], a stable per-spawn number. Above 1, always.
+##
+## Two stream names, so the game's number 5 and this spawner's fifth spawn are different
+## seeds: a game that answers [member seed_source] for some NPCs and not others would
+## otherwise hand two of them one seed.
+func seed_for(subject: int, from_game: bool = false) -> int:
+	var stream := DotRandomStream.new(seed_base).stream_for(
+		&"npc_id" if from_game else &"npc", subject
+	)
+
+	# 2..2^31-1: positive and small enough to survive a float, and never 0 or 1, which
+	# dot-npc-ai reads as "this character still has the preset's seed".
+	return stream.range_i_at(0, 2, 0x7FFFFFFF)
+
+
+func _seed_npc(npc: DotNpcInstance) -> int:
+	_spawn_serial += 1
+
+	if seed_source.is_valid():
+		var given: Variant = seed_source.call(npc)
+
+		if (given is int) and int(given) != 0:
+			return seed_for(int(given), true)
+
+	return seed_for(_spawn_serial)
 
 
 ## Spawns up to [param count] of one kind around [param at]. Returns what was made.
@@ -1069,6 +1127,8 @@ func describe() -> Dictionary:
 		"killed": kill_count,
 		"reclaimed": reclaim_count,
 		"refused": refusal_count,
+		"seed_base": seed_base,
+		"seeded_by": "game" if seed_source.is_valid() else "spawn count",
 		"nav": nav.describe() if has_nav() else "none",
 		"limits": limits.describe_summary() if limits != null else "none",
 	}

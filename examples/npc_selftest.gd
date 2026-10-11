@@ -17,14 +17,15 @@ extends Node
 const BODY := "res://fixtures/npc_body.tscn"
 const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
+const CHOOSER := "res://fixtures/chooser_brain.gd"
 
-const CHECKS := 223
+const CHECKS := 231
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
 ## bailed out early after a failed guard is counted as not finished on purpose. The CHECKS
 ## total is the other half — see docs/testing.md.
-const SECTIONS := 31
+const SECTIONS := 32
 
 var _passed := 0
 var _failed := 0
@@ -72,6 +73,7 @@ func _run() -> void:
 	_test_navigable_spawn()
 	_test_spawner_pathing()
 	_test_brains()
+	_test_stable_seeds()
 	_test_brains_are_released()
 	_test_damage()
 	_test_reclaim()
@@ -1568,6 +1570,97 @@ func _test_brains() -> void:
 
 	spawner.queue_free()
 	_done()
+
+
+## The same spawns make the same choices, however many unrelated objects came first.
+##
+## [b]The bug this pins:[/b] NPCs were seeded from `get_instance_id()`, the engine's object id,
+## and one extra object created at startup moved every id, so a game's timing check flipped
+## on a commit that touched nothing it measured, and a replay could not agree with its
+## recording. Each run here creates a different number of throwaway objects before spawning;
+## with the object id as the seed no two runs agree.
+func _test_stable_seeds() -> void:
+	_section("stable seeds")
+
+	var quiet := _seeded_run(0, 0)
+	var noisy := _seeded_run(37, 0)
+	var noisier := _seeded_run(211, 0)
+
+	_check(quiet.size() == 5 and noisy.size() == 5, "every scripted spawn landed",
+		"%d and %d" % [quiet.size(), noisy.size()])
+	_check(quiet == noisy and noisy == noisier,
+		"the same spawns get the same seeds and first choices, whatever was created first",
+		"%s vs %s" % [quiet, noisy])
+
+	var seeds := {}
+	var above_one := true
+
+	for row: Array in quiet:
+		seeds[row[0]] = true
+		above_one = above_one and int(row[0]) > 1
+
+	_check(seeds.size() == quiet.size(), "and no two NPCs share one",
+		"or a horde turns, waits and misses in step")
+	_check(above_one, "and every seed is above 1",
+		"dot-npc-ai reads 0 and 1 as \"still the preset's seed\"")
+	_check(_seeded_run(0, 99) != quiet, "a different seed_base is a different session")
+
+	# The game's own number, its entity id in practice, wins over the spawn count, and
+	# zero from it falls back rather than giving every NPC the seed of "0". The stand-in
+	# here is where the NPC was placed, which the source can read because it is asked after
+	# the node is in the world.
+	var given := _seeded_run(0, 0, func(npc: DotNpcInstance) -> int:
+		return 4096 + roundi(npc.position().x))
+	var given_again := _seeded_run(53, 0, func(npc: DotNpcInstance) -> int:
+		return 4096 + roundi(npc.position().x))
+	_check(given == given_again and given != quiet,
+		"a seed_source number is used, and is as stable as what the game gave")
+	_check(_seeded_run(0, 0, func(_npc: DotNpcInstance) -> int: return 0) == quiet,
+		"and a seed_source answering 0 falls back to the spawn count")
+
+	var loose := _loose_npc(DotNpcDef.make(&"loose", BODY))
+	_check(loose.seed == 0, "an NPC built by hand is unseeded, and says so with 0")
+	loose.node.free()
+	_done()
+
+
+## One scripted run: [param noise] throwaway objects, then five spawns. Returns
+## `[seed, first_choices]` per NPC in spawn order.
+func _seeded_run(noise: int, base: int, source: Callable = Callable()) -> Array:
+	var junk: Array[Object] = []
+
+	for i in noise:
+		junk.append(Node.new() if i % 2 == 0 else Object.new())
+
+	var cat := _catalogue()
+	var chooser := DotNpcDef.make(&"chooser", BODY)
+	chooser.brain_script_path = CHOOSER
+	chooser.require_line_of_sight = false
+	cat.add(chooser)
+
+	var spawner := DotNpcSpawner.new()
+	spawner.catalogue = cat
+	spawner.limits = _limits()
+	spawner.authoritative = true
+	spawner.seed_base = base
+	spawner.seed_source = source
+	_world.add_child(spawner)
+
+	var out: Array = []
+
+	for i in 5:
+		var npc := spawner.spawn(&"chooser", Vector3(float(i) * 2.0, 0.0, 0.0))
+
+		if npc != null and npc.brain != null:
+			out.append([npc.seed, (npc.brain.get(&"first_choices") as Array).duplicate()])
+
+	_world.remove_child(spawner)
+	spawner.free()
+
+	for thing in junk:
+		thing.free()
+
+	return out
 
 
 ## A brain and its NPC point at each other. See [method DotNpcBrain.unbind].

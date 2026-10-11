@@ -31,7 +31,25 @@ var node: Node = null
 ## An id rather than the node itself, because a director holding a reference across
 ## ticks needs a handle that is safe to compare and safe to hold after the node is
 ## freed. A freed Node compared with `==` is undefined; an int is an int.
+##
+## [b]An identity, never a seed.[/b] It is the engine's object id, which depends on how many
+## objects the process created before this one, so anything drawn from it changes when an
+## unrelated object is added anywhere, and a replay disagrees with the run it recorded.
+## Seed choices from [member seed].
 var instance_id: int = 0
+
+## This NPC's own random seed: the same number for the same spawn in every run.
+##
+## Set by [DotNpcSpawner] before the brain is bound, from the spawner's
+## [member DotNpcSpawner.seed_base] and either the game's own number for the NPC
+## ([member DotNpcSpawner.seed_source], usually its entity id) or the spawner's count of
+## spawns. Always above 1, because dot-npc-ai reads a character seed of 0 or 1 as "still the
+## preset's". Zero means nobody seeded it: an NPC built by hand rather than spawned.
+##
+## [b]Separate from [member instance_id] on purpose.[/b] The id was the seed until a measured
+## timing check in a game flipped on an unrelated commit: one extra object created at startup
+## moved every NPC's object id, and with it every NPC's choices.
+var seed: int = 0
 
 ## Who asked for it: a player id, a director's id, or empty for the map.
 var owner_id: StringName = &""
@@ -179,6 +197,7 @@ func describe() -> Dictionary:
 	return {
 		"npc": String(def.id) if def != null else "?",
 		"owner": String(owner_id),
+		"seed": seed,
 		"alive": is_alive(),
 		"health": "%.0f/%.0f" % [health, def.max_health if def != null else 0.0],
 		"target": String(target_id) if has_target() else "-",
