@@ -60,6 +60,14 @@ A campaign map is thousands of points (a 120 by 80 metre street at one metre is 
 
 **The answers are the scan's answers, ties included.** The lowest index still wins at an equal distance, and the edges are still connected in the same order, because a follower that snapped to a different one of two equidistant points depending on how an index was laid out would path differently on two machines. "navigation at scale" in the suite compares random lookups with a brute-force scan.
 
+**The search itself is native.** `DotNpcNavGraph.find_path` searches with Godot's `AStar3D`, one per filter signature (its flags and costs, and the graph's size), built on first use with each point's arrival cost as its weight and every point the filter refuses disabled. game-zombie-zone's survival maps are fifteen to eighteen thousand points and at wave 10 its zombies asked two or three paths a tick: the script A* was three milliseconds a path and over half the server's tick, and a crowd repathing together was a 170 ms tick; native, a path is about 60 microseconds. The script search stays as `use_native_search = false` and as the reference "navigation at scale" compares against: the same length of path, not always the same points, because where two routes cost the same the two searches may take either. The component labels still answer an unreachable goal before either search runs.
+
+**Smoothing only what will be walked** (`DotNpcSpawner.smooth_horizon`, 0 = all). Once the search was native, smoothing a forty-point path was most of a path's cost, and a follower that repaths every `repath_interval` never walks past its first few metres. game-zombie-zone smooths 16 points.
+
+**Smoothing keeps its probes within three quarters of a cell** (`can_walk_straight`). At the point radius (1.25 spacings) a probe in a cell the builder removed snapped to a point across the obstacle's corner, on a real diagonal edge, and the smoother passed a line through the corner. It was latent until the native search took the other of two equal routes, and game-arena's `headless_bots` caught it on a crate's corner (dot-npc-smooth-corner-1).
+
+**A follower stuck on a corner goes rough** (`DotNpcPath.go_rough(now, seconds)`). Even so, a coarse graph's straight line clips a door jamb thinner than its spacing, and an NPC pressed into the jamb for as long as its path lasted (the ballpark's dugout and outfield doors, for minutes). A brain that notices it is making no headway (dot-npc-ai's `steer_with_spacing` does) drops the path; for a few seconds the spawner hands it the graph's own corners unsmoothed, and a waypoint counts as reached at half a metre instead of 1.2 m, because turning for the next corner early cut the same jamb.
+
 ## Not here
 
 - **No flying and no swimming.** The builder generates a walkable graph. A flying NPC needs no graph and should steer directly.

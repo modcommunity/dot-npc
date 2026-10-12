@@ -56,6 +56,9 @@ Read the family [CLAUDE.md](../../CLAUDE.md) first; this file is only what is sp
 - Filters apply to the start point too; flags are per kind (`nav_exclude_flags`), costs per area. [navigation](docs/navigation.md#areas-and-flags-because-passable-is-two-questions)
 - A partial path never has the goal appended; a finished partial path waits for its interval; unreachable goals are answered from the component labels. [navigation](docs/navigation.md#partial-paths-because-standing-still-is-not-an-answer)
 - Indexed lookups must return the brute-force scan's answer, ties included (lowest index wins). [navigation](docs/navigation.md#at-scale)
+- `find_path` searches with `AStar3D` (one per filter signature); the script A* is the reference (`use_native_search = false`) and must find paths as short. [navigation](docs/navigation.md#at-scale)
+- `can_walk_straight` probes no wider than 0.75 spacings; a stuck follower calls `DotNpcPath.go_rough` for unsmoothed corners; `smooth_horizon` limits smoothing to a path's head. [navigation](docs/navigation.md#at-scale)
+- The spawner holds what it loads; a host calls `warm()` at map load. `face()` skips a non-finite or immovable position. [runtime](docs/runtime.md#a-kinds-resources-are-loaded-once-and-held)
 - `PackedInt32Array` in a dictionary or array is a copy; append through a local and write it back. [history](docs/history.md)
 
 ## Where a game plugs in

@@ -265,7 +265,19 @@ func face(direction: Vector3) -> void:
 	# round. Nobody saw it on a client because `DotNpcNetSync.yaw_of` was half a turn out
 	# the other way, and the two cancelled on screen. Found by dot-npc-ai's turn-rate
 	# check, which asked how far an NPC turned and was told 180 degrees.
-	body.look_at(body.global_position + flat.normalized(), Vector3.UP)
+	#
+	# [b]And never from somewhere that is not a place.[/b] A body far enough out (one that
+	# fell out of a map and kept falling, or was flung to infinity) is a position a metre
+	# cannot change, and `look_at` printed its refusal once a think for every such NPC
+	# (game-zombie-zone's mall, sixty-five times in a run). The game takes such an NPC out of
+	# the world; this keeps the log clean until it does.
+	var origin := body.global_position
+	var target := origin + flat.normalized()
+
+	if not origin.is_finite() or target.is_equal_approx(origin):
+		return
+
+	body.look_at(target, Vector3.UP)
 
 
 ## Stops the body dead, horizontally.

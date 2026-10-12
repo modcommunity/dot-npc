@@ -130,6 +130,14 @@ var seed_source: Callable = Callable()
 ## measuring what smoothing is worth.
 @export var smooth_paths: bool = true
 
+## How many of a path's first points are smoothed; 0 smooths all of it.
+##
+## A follower repaths every [member repath_interval] and walks a few metres of a path before
+## it does, so the far end of a long path is smoothed for nobody. On a map of fifteen thousand
+## points with eighty NPCs chasing, smoothing whole paths was most of a path's cost once the
+## search itself was native. 16 is plenty for a 1.5 s repath at running speed.
+@export var smooth_horizon: int = 0
+
 ## Walk toward an unreachable goal rather than standing still.
 ##
 ## On, for the reason [method DotNpcBrain.steer_along_path] falls back to steering
@@ -147,6 +155,10 @@ var nav: DotNpcNavGraph = null
 
 ## def id -> DotNpcNavFilter, built on first use. See [method _filter_for].
 var _nav_filters: Dictionary = {}
+
+## Path -> the scene or brain script loaded from it, held for as long as the spawner lives.
+## See [method warm].
+var _held: Dictionary = {}
 
 ## Shared perception. One object, because its tuning is the world's rather than an
 ## NPC's — two NPCs that gave up on a target at different ranges would be a game
@@ -276,8 +288,8 @@ func path_toward(npc: DotNpcInstance, path: DotNpcPath, goal: Vector3) -> Vector
 
 		var found := (
 			nav.find_smooth_path(
-				npc.position(), goal, limits.spawn_snap_radius, allow_partial_paths
-			) if smooth_paths
+				npc.position(), goal, limits.spawn_snap_radius, allow_partial_paths, smooth_horizon
+			) if smooth_paths and not path.is_rough(_now)
 			else nav.find_path(
 				npc.position(), goal, limits.spawn_snap_radius, allow_partial_paths
 			)
@@ -553,14 +565,14 @@ func _prepare(npc_id: StringName, at: Vector3, owner_id: StringName) -> Array:
 		_refuse(owner_id, npc_id, placement.error.message)
 		return []
 
-	if not ResourceLoader.exists(def.scene_path):
+	if not _held.has(def.scene_path) and not ResourceLoader.exists(def.scene_path):
 		# Distinguished from "no such NPC" because the two need different fixes: this
 		# one is a pack that is not mounted, and telling an operator "no such NPC"
 		# sends them to edit a catalogue that is already right.
 		_refuse(owner_id, npc_id, "That NPC's content is not loaded on this server.")
 		return []
 
-	var scene: Resource = load(def.scene_path)
+	var scene: Resource = _resource(def.scene_path)
 
 	if not (scene is PackedScene):
 		_refuse(owner_id, npc_id, "That NPC's scene is not a PackedScene.")
@@ -762,13 +774,13 @@ func attach_brain(npc: DotNpcInstance) -> DotResult:
 	if npc.def.brain_script_path == "":
 		return DotResult.success(null)
 
-	if not ResourceLoader.exists(npc.def.brain_script_path):
+	if not _held.has(npc.def.brain_script_path) and not ResourceLoader.exists(npc.def.brain_script_path):
 		return DotResult.fail(
 			DotError.CODE_IO, "That brain script is not here.",
 			npc.def.brain_script_path
 		)
 
-	var script: Resource = load(npc.def.brain_script_path)
+	var script: Resource = _resource(npc.def.brain_script_path)
 
 	if not (script is GDScript):
 		return DotResult.fail(
@@ -972,6 +984,47 @@ func clear_owner(owner_id: StringName, reason: StringName = REASON_CLEANUP) -> i
 	_last_spawn.erase(owner_id)
 
 	return count
+
+
+## Loads every catalogue kind's scene and brain script now, and holds them. Returns how many
+## resources were loaded.
+##
+## [b]A kind's first spawn compiles its brain[/b] (and the scripts it extends): measured at
+## 30 ms a kind in game-zombie-zone, a hitch the first time each special came in a hold. A host
+## calls this while a map loads, where a second is expected. Loaded or not, what a spawn loads
+## is held from then on: a resource nothing references is freed, so a kind whose last NPC died
+## was compiled again on its next spawn.
+func warm() -> int:
+	var count := 0
+
+	if catalogue == null:
+		return count
+
+	for def: DotNpcDef in catalogue.npcs:
+		if def == null or not def.enabled:
+			continue
+
+		for path: String in [def.scene_path, def.brain_script_path]:
+			if path != "" and not _held.has(path) and ResourceLoader.exists(path):
+				if _resource(path) != null:
+					count += 1
+
+	return count
+
+
+## [param path] loaded once and held. See [method warm].
+func _resource(path: String) -> Resource:
+	var found: Variant = _held.get(path)
+
+	if found != null:
+		return found
+
+	var loaded := load(path)
+
+	if loaded != null:
+		_held[path] = loaded
+
+	return loaded
 
 
 func clear_all(reason: StringName = REASON_ADMIN) -> int:

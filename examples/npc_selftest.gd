@@ -19,7 +19,7 @@ const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 const CHOOSER := "res://fixtures/chooser_brain.gd"
 
-const CHECKS := 231
+const CHECKS := 237
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
@@ -488,6 +488,39 @@ func _test_nav_at_scale() -> void:
 					walled = true
 
 	_check(not walled, "and no step of it goes through a block")
+
+	# The native search (AStar3D) against the script A* it replaced: the same length of path
+	# for random pairs, with and without a filter that makes some ground dearer, and much
+	# faster. Same length rather than same points, because two routes of equal cost may be
+	# taken either way round.
+	var script_graph := DotNpcNavGraph.new(nav)
+	script_graph.use_native_search = false
+	var dear := DotNpcNavFilter.new()
+	dear.set_area_cost(DotNpcNavData.AREA_GROUND, 1.0)
+	var longer := 0
+	var native_us := 0
+	var script_us := 0
+	# Each filter's AStar3D is built on its first search; build both before timing.
+	graph.filter = dear
+	var _warm := graph.find_path(Vector3(-58, 0, -38), Vector3(58, 0, 38), 1.5)
+
+	for i in 40:
+		var a := Vector3(rng.randf_range(-58, 58), 0, rng.randf_range(-38, 38))
+		var b := Vector3(rng.randf_range(-58, 58), 0, rng.randf_range(-38, 38))
+		graph.filter = dear if i % 2 == 1 else null
+		script_graph.filter = graph.filter
+		var t0 := Time.get_ticks_usec()
+		var fast := graph.find_path(a, b, 1.5)
+		var t1 := Time.get_ticks_usec()
+		var slow := script_graph.find_path(a, b, 1.5)
+		var t2 := Time.get_ticks_usec()
+		native_us += t1 - t0
+		script_us += t2 - t1
+		if fast.is_empty() != slow.is_empty() or absf(_path_length(fast) - _path_length(slow)) > 0.01:
+			longer += 1
+
+	_check(longer == 0, "the native search finds paths as short as the script A*", "%d of 40 differ" % longer)
+	_check(native_us * 4 < script_us, "and at a fraction of the cost", "%d us against %d us" % [native_us, script_us])
 	_done()
 
 
@@ -610,6 +643,16 @@ func _test_nav_smoothing() -> void:
 	_check(
 		smooth[0] == from and smooth[smooth.size() - 1] == to,
 		"and it still begins and ends where the caller is"
+	)
+
+	# A horizon smooths the head and leaves the tail as the graph gave it: same ends, the
+	# raw tail points still there, and no longer than the raw path.
+	var head := graph.smooth_path(raw, -1.0, 8, 3)
+	var tail_kept := raw.size() > 4 and head[head.size() - 2] == raw[raw.size() - 2]
+	_check(
+		head[0] == from and head[head.size() - 1] == to and tail_kept and _path_length(head) <= _path_length(raw) + 0.001,
+		"a smoothing horizon smooths the head of a path and keeps its tail",
+		"%d raw, %d with a horizon of 3, %d smoothed" % [raw.size(), head.size(), smooth.size()]
 	)
 
 	# The one that matters. Smoothing is a shortcut and a shortcut through a wall is
@@ -1507,6 +1550,21 @@ func _test_spawner_pathing() -> void:
 		"%d smoothed against %d raw" % [smooth.points.size(), rough.points.size()]
 	)
 
+	# A follower stuck on a cut corner asks for the graph's own corners for a while, then gets
+	# smoothed paths again.
+	spawner.smooth_paths = true
+	smooth.go_rough(spawner.now(), 2.0)
+	spawner.path_toward(npc, smooth, far)
+	var while_rough := smooth.points.size()
+	smooth.rough_until = -INF
+	smooth.clear()
+	spawner.path_toward(npc, smooth, far)
+	_check(
+		while_rough == rough.points.size() and smooth.points.size() < while_rough,
+		"go_rough() gives a stuck follower the unsmoothed path, and only while it lasts",
+		"%d rough, %d after" % [while_rough, smooth.points.size()]
+	)
+
 	# The flag has to survive a catalogue round trip, or a delivered NPC loses the one
 	# thing that keeps it out of a tunnel it cannot use.
 	var def := DotNpcDef.make(&"crawler", "res://x.tscn")
@@ -1537,6 +1595,9 @@ func _test_brains() -> void:
 	_section("brains")
 
 	var spawner := _spawner()
+	# Every kind's scene and brain loaded and held before the first spawn, once.
+	var warmed := spawner.warm()
+	_check(warmed >= 2 and spawner.warm() == 0, "warm() loads every kind's scene and brain once and holds them", "%d loaded" % warmed)
 	var npc := spawner.spawn(&"walker", Vector3.ZERO)
 
 	_check(npc.brain != null, "a definition naming a brain gets one")
@@ -1553,6 +1614,16 @@ func _test_brains() -> void:
 
 	var critter := spawner.spawn(&"critter", Vector3.ZERO)
 	_check(critter.brain == null, "and an NPC that names no brain simply has none")
+
+	# Facing from somewhere a metre cannot change (a body fallen or flung far out) is skipped,
+	# not handed to look_at, which refuses it with an error once a think.
+	var far_body := npc.node as Node3D
+	var was_at := far_body.global_position
+	var was_turned := far_body.global_rotation
+	far_body.global_position = Vector3(3.0e7, 0.0, 3.0e7)
+	(npc.brain as DotNpcBrain).face(Vector3(1, 0, 1))
+	_check(far_body.global_rotation.is_equal_approx(was_turned), "face() from a position a metre cannot change does nothing")
+	far_body.global_position = was_at
 
 	# One tick with a candidate in front of it: the brain should think and steer.
 	spawner.set_candidates([_candidate(&"p", Vector3(0, 0, -8))])

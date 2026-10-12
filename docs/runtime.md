@@ -69,6 +69,14 @@ Population is the whole cost of an NPC layer, and every number in `DotNpcLimits`
 
 Deciding whether a spawn is on the graph uses `nearest_point()` for an index, never `DotNpcNavData.snap()`: `snap` returns the point it was handed when nothing is near, which is right for nudging a position and makes a spawn two hundred metres off the graph measure as perfect.
 
+### A kind's resources are loaded once and held
+
+The spawner holds every scene and brain script it loads for as long as it lives, and `warm()` loads every catalogue kind's now. A kind's first spawn compiles its brain and the scripts it extends, 30 ms a kind in game-zombie-zone (a hitch the first time each special came in a hold), and a resource nothing references is freed, so a kind whose last NPC died was compiled again on its next spawn. A host calls `warm()` while a map loads.
+
+### `face` from somewhere that is not a place does nothing
+
+A body far enough out that a metre cannot move it (one fallen out of a map and still falling, one flung to infinity) is skipped rather than handed to `look_at`, which printed its refusal once a think per such NPC (game-zombie-zone's mall, sixty-five times in a run). Taking such an NPC out of the world is the game's job.
+
 ## Dying and being reclaimed are not the same event
 
 `died` fires while the node still exists, names who did it, and is what a scoring layer listens to. `removed` fires for every departure including a director tidying up something nobody could see. A game with only `removed` would either award a kill for the tidy-up or have to guess.

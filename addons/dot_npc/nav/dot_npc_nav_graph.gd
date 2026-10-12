@@ -51,6 +51,24 @@ var searches: int = 0
 ## How many of those failed to reach the goal.
 var failures: int = 0
 
+## Whether [method find_path] searches with Godot's [AStar3D] (native code) rather than the
+## script A* in [method _search]. On by default.
+##
+## [b]Measured, not assumed.[/b] game-zombie-zone's survival maps are fifteen to eighteen
+## thousand points, and at wave 10 its zombies asked two or three paths a tick: the script
+## search was three milliseconds a path and over half the server's tick, and a crowd repathing
+## together was a 170 ms tick. The same searches in [AStar3D] are a tenth of a millisecond.
+## The script search stays, as the reference the suite compares against and for a host that
+## wants it ([code]use_native_search = false[/code]).
+##
+## The answers are the same paths by cost, not always the same points: where two routes cost
+## exactly the same, the two searches may take different ones. Both are deterministic, so two
+## machines still agree.
+var use_native_search: bool = true
+
+## One [AStar3D] per filter signature (see [method _native_for]), built on first use.
+var _native: Dictionary = {}
+
 
 func _init(p_data: DotNpcNavData = null) -> void:
 	if p_data != null:
@@ -233,6 +251,9 @@ func find_path(
 
 		return partial
 
+	if use_native_search:
+		return _find_native(from, to, start, goal, allow_partial)
+
 	var result := _search(start, goal)
 	var came_from: Dictionary = result["came_from"]
 	var reached := bool(result["reached"])
@@ -289,6 +310,76 @@ func find_path(
 		out.append(to)
 
 	return out
+
+
+## [method find_path]'s search and assembly, in [AStar3D]. [param start] and [param goal] are
+## already snapped, distinct and in one component (or a filter is set).
+func _find_native(from: Vector3, to: Vector3, start: int, goal: int, allow_partial: bool) -> PackedVector3Array:
+	var out := PackedVector3Array()
+	var astar := _native_for(filter)
+	var chain := astar.get_id_path(start, goal, allow_partial)
+
+	if chain.is_empty() or chain[0] != start:
+		failures += 1
+		return out
+
+	if chain[chain.size() - 1] != goal:
+		# Short of the goal: what the script search calls its best point. As there, a partial
+		# path is only handed out when asked for, and never with the goal on its end.
+		failures += 1
+
+		if not allow_partial or chain.size() < 2:
+			return out
+
+		last_partial = true
+
+	out.append(from)
+
+	for i in chain:
+		out.append(data.points[i])
+
+	if not last_partial:
+		out.append(to)
+
+	return out
+
+
+## The [AStar3D] for [param with]: every point, the weight of arriving at it, and the points
+## the filter refuses disabled. Kept per filter SIGNATURE (its flags and costs, and the graph's
+## size) rather than per filter object, because a spawner hands the graph a filter per kind and
+## a game may build a fresh one each search; built once, it is reused for every search after.
+func _native_for(with: DotNpcNavFilter) -> AStar3D:
+	var key := "-" if with == null else "%d|%d|%s|%s" % [with.include_flags, with.exclude_flags, with.avoid_cost, with.area_costs]
+	key += "|%d|%d" % [data.points.size(), data.edges.size()]
+	var found: Variant = _native.get(key)
+
+	if found != null:
+		return found
+
+	var astar := AStar3D.new()
+	var n := data.points.size()
+	astar.reserve_space(n)
+
+	for i in n:
+		var weight := 1.0
+
+		if with != null:
+			weight = with.cost_multiplier(data.area_of(i), data.flags_of(i))
+
+		astar.add_point(i, data.points[i], weight)
+
+		if with != null and not with.passes(data.area_of(i), data.flags_of(i)):
+			astar.set_point_disabled(i, true)
+
+	# The adjacency's order, which is the edge list's: connecting in the same order as the
+	# script search reads its neighbours keeps a tie as close to its choice as it can be.
+	for i in n:
+		for next in neighbours(i):
+			if next > i:
+				astar.connect_points(i, next, true)
+
+	_native[key] = astar
+	return astar
 
 
 ## The nearest point this searcher is allowed to stand on.
@@ -411,6 +502,12 @@ func can_walk_straight(a: Vector3, b: Vector3, corridor: float = -1.0) -> bool:
 		return false
 
 	var width := data.point_radius if corridor < 0.0 else corridor
+	# No wider than three quarters of a cell: at the point radius (1.25 spacings) a sample
+	# beside a corner snapped to a point across it, and smoothing cut corners the graph goes
+	# round (dot-npc-smooth-corner-1, found when the native search changed which of two equal
+	# routes a path takes).
+	if data.grid_spacing > 0.0:
+		width = minf(width, data.grid_spacing * 0.75)
 	var distance := a.distance_to(b)
 
 	if distance <= 0.001:
@@ -471,8 +568,13 @@ func _are_neighbours(a: int, b: int) -> bool:
 ##
 ## Runs in a bounded number of visibility tests rather than the O(n²) the naive
 ## spelling costs: [param lookahead] caps how far ahead one waypoint may reach.
+##
+## [param horizon] above 0 smooths only the path's first [param horizon] points and keeps the
+## rest as the graph gave them. A follower that repaths every second and a half never walks
+## far past the first few metres of a path, and smoothing a forty-point path was most of
+## what a path cost once the search was native (game-zombie-zone at wave 10).
 func smooth_path(
-	path: PackedVector3Array, corridor: float = -1.0, lookahead: int = 8
+	path: PackedVector3Array, corridor: float = -1.0, lookahead: int = 8, horizon: int = 0
 ) -> PackedVector3Array:
 	if path.size() <= 2:
 		return path
@@ -481,8 +583,9 @@ func smooth_path(
 	out.append(path[0])
 
 	var anchor := 0
+	var stop := path.size() - 1 if horizon <= 0 else mini(horizon, path.size() - 1)
 
-	while anchor < path.size() - 1:
+	while anchor < stop:
 		var furthest := anchor + 1
 		var limit := mini(anchor + maxi(lookahead, 1), path.size() - 1)
 
@@ -494,6 +597,9 @@ func smooth_path(
 		out.append(path[furthest])
 		anchor = furthest
 
+	for rest in range(anchor + 1, path.size()):
+		out.append(path[rest])
+
 	return out
 
 
@@ -502,14 +608,15 @@ func find_smooth_path(
 	from: Vector3,
 	to: Vector3,
 	snap_radius: float = -1.0,
-	allow_partial: bool = false
+	allow_partial: bool = false,
+	horizon: int = 0
 ) -> PackedVector3Array:
 	var path := find_path(from, to, snap_radius, allow_partial)
 
 	if path.size() <= 2:
 		return path
 
-	return smooth_path(path)
+	return smooth_path(path, -1.0, 8, horizon)
 
 
 func describe() -> Dictionary:

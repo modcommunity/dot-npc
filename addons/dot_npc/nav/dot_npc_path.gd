@@ -44,6 +44,45 @@ var goal_at_compute: Vector3 = Vector3.ZERO
 var partial: bool = false
 
 
+## Until when (the spawner's clock) this follower's paths come unsmoothed. See [method go_rough].
+var rough_until: float = -INF
+
+
+## Drops the path and asks for the graph's own corners, unsmoothed, for [param seconds].
+##
+## [b]For a follower stuck on a corner its smoothed path cut.[/b] Smoothing asks whether the
+## straight line stays on the graph's edges, which a coarse graph answers yes for a line that
+## clips a door jamb thinner than its spacing: a zombie on the ballpark pressed into a jamb for
+## minutes. The raw path keeps to the points the builder placed clear of everything; a brain
+## that notices it is not moving calls this.
+##
+## While rough, a waypoint counts as reached only within [constant ROUGH_ARRIVE] metres:
+## turning for the next corner at [member arrive_radius] (1.2 m) out cut the same door jamb.
+func go_rough(now: float, seconds: float = 4.0) -> void:
+	if _arrive_before < 0.0:
+		_arrive_before = arrive_radius
+	arrive_radius = minf(arrive_radius, ROUGH_ARRIVE)
+	rough_until = now + seconds
+	clear()
+
+
+## Whether paths for this follower are unsmoothed at [param now]; puts the arrive radius back
+## once they are not.
+func is_rough(now: float) -> bool:
+	if now < rough_until:
+		return true
+
+	if _arrive_before >= 0.0:
+		arrive_radius = _arrive_before
+		_arrive_before = -1.0
+
+	return false
+
+
+const ROUGH_ARRIVE := 0.5
+var _arrive_before: float = -1.0
+
+
 func set_points(p_points: PackedVector3Array, now: float, goal: Vector3) -> void:
 	points = p_points
 	index = 1 if p_points.size() > 1 else 0
