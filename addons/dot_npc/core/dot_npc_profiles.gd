@@ -1,7 +1,7 @@
 class_name DotNpcProfiles
 extends RefCounted
 
-## Loads [DotNpcDef] from `npc` profiles (cfg/addons/dot-npc/npc, cfg/game/<game>/npc, cfg/server/npc).
+## Loads [DotNpcDef] from `npc` profiles (cfg/addons/dot-npc/npc, cfg/game/<game>/npc, cfg/server/addons/dot-npc/npc, cfg/server/game/<game>/npc).
 
 const ADDON := "dot-npc"
 const KIND := "npc"
