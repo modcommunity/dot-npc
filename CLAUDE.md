@@ -23,6 +23,8 @@ Profiles: `DotNpcProfiles` (the `npc` kind) offers `profile_schemas()`, so dot-c
 | `addons/dot_npc/core/` | `DotNpcDef` (one kind, checkable without loading a scene), `DotNpcCatalogue` (JSON an operator edits), `DotNpcLimits` (a `DotConfig`), `DotNpcInstance` (one NPC in the world) |
 | `addons/dot_npc/runtime/` | `DotNpcSpawner` (the node a game adds: spawn, sense, think, hurt, reclaim), `DotNpcSenses`, `DotNpcBrain` (extended by path) |
 | `addons/dot_npc/nav/` | `DotNpcNavData` (points, areas, flags, cover, digest), `DotNpcNavBuilder`, `DotNpcNavFilter`, `DotNpcNavGraph` (A*, smoothing, partial paths), `DotNpcPath` |
+| `addons/dot_npc/view/` | `DotNpcGibs`: cuts a severed limb out of a skinned mesh, stump and blood (drawn only) |
+| `addons/dot_npc/runtime/dot_npc_limbs.gd` | `DotNpcLimbs`: shootable limbs on a body (regions from bones, health, `mask()` for `DotNpcNetSync.limb_specs()`, `speed_scale()`); tuned by `limbs:` in `cfg/addons/dot-npc/*.yml` |
 | `addons/dot_npc/net/` | `DotNpcNetSync`: what replicates, as strings; never names dot-net |
 | `fixtures/` | bodies (3D and 2D) and brains for the suite, written the pack-safe way |
 | `examples/npc_selftest.tscn` | the suite |

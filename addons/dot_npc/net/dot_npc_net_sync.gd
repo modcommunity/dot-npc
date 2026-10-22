@@ -62,6 +62,16 @@ enum State {
 }
 
 
+## One bit per limb ([constant DotNpcLimbs.MAX_LIMBS]): set when it has been severed.
+const LIMB_BITS := 8
+
+
+## The one extra field of an NPC with [DotNpcLimbs]: `net_limbs`, filled from `DotNpcLimbs.mask()` and applied
+## with `apply_mask()`. Kept out of [method specs] so a game without limbs declares nothing new.
+static func limb_specs() -> Array[Dictionary]:
+	return [{"property": &"net_limbs", "type": "UINT", "bits": LIMB_BITS, "interpolated": false}]
+
+
 static func specs() -> Array[Dictionary]:
 	return [
 		# Position as three floats rather than a packed vector, because dot-net

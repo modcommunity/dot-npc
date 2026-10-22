@@ -19,13 +19,13 @@ const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 const CHOOSER := "res://fixtures/chooser_brain.gd"
 
-const CHECKS := 238 + 23
+const CHECKS := 238 + 23 + 15
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
 ## bailed out early after a failed guard is counted as not finished on purpose. The CHECKS
 ## total is the other half — see docs/testing.md.
-const SECTIONS := 33
+const SECTIONS := 34
 
 var _passed := 0
 var _failed := 0
@@ -85,6 +85,7 @@ func _run() -> void:
 	# It looked like a passing suite that was quietly one check short.
 	await _test_no_leaked_nodes()
 	_test_net_sync()
+	_test_limbs()
 
 	print("")
 	print("%d passed, %d failed" % [_passed, _failed])
@@ -2115,3 +2116,56 @@ class _NetProbe:
 	var net_yaw: int = 0
 	var net_health: int = 0
 	var net_state: int = 0
+
+
+func _limb_skeleton() -> Skeleton3D:
+	var sk := Skeleton3D.new()
+	for spec in [["root", -1, Vector3.ZERO], ["head", 0, Vector3(0, 1.7, 0)], ["armL", 0, Vector3(-0.5, 1.4, 0)], ["legL", 0, Vector3(-0.2, 0.9, 0)]]:
+		sk.add_bone(spec[0])
+		sk.set_bone_parent(sk.get_bone_count() - 1, spec[1])
+		sk.set_bone_rest(sk.get_bone_count() - 1, Transform3D(Basis.IDENTITY, spec[2]))
+	sk.reset_bone_poses()
+	return sk
+
+
+func _test_limbs() -> void:
+	_section("limbs")
+	var defs := {
+		"head": {"bones": ["head"], "radius": 0.3, "health": 50.0, "kills": true},
+		"armL": {"bones": ["armL"], "radius": 0.2, "health": 80.0, "attack": 0.5},
+		"legL": {"bones": ["legL"], "radius": 0.2, "health": 80.0, "slow": 0.5, "damage_scale": 2.0},
+		"junk": {"radius": 1.0},
+	}
+	var body := Node3D.new()
+	_world.add_child(body)
+	var sk := _limb_skeleton()
+	body.add_child(sk)
+	var limbs := DotNpcLimbs.new()
+	limbs.skeleton = sk
+	body.add_child(limbs)
+	limbs.setup(&"dummy", defs)
+	_check(limbs.limb_names() == [&"head", &"armL", &"legL"], "a def without bones is not a limb, order kept")
+	_check(limbs.limb_at(Vector3(0, 1.7, 0.1)) == &"head", "a point at the head finds the head")
+	_check(limbs.limb_at(Vector3(5, 5, 5)) == &"", "a point far away finds nothing")
+	_check(limbs.hit(Vector3(0, 1.7, 0), 20.0) == &"" and not limbs.is_severed(&"head"), "a shot that does not finish a limb leaves it on")
+	_check(limbs.hit(Vector3(0, 1.7, 0), 40.0) == &"head" and limbs.is_severed(&"head"), "the shot that spends its health severs it")
+	_check(limbs.is_lethal(), "a head with kills makes the NPC lethal")
+	_check(limbs.limb_at(Vector3(0, 1.7, 0)) != &"head", "a severed limb is not hit again")
+	_check(limbs.mask() == 1, "the mask has the head's bit")
+	_check(limbs.hit(Vector3(-0.2, 0.9, 0), 40.0) == &"legL", "damage_scale multiplies what a limb takes")
+	_check(is_equal_approx(limbs.speed_scale(), 0.5) and limbs.attack_scale() == 1.0, "a lost leg slows, and arms are unaffected")
+	var mirror := DotNpcLimbs.new()
+	body.add_child(mirror)
+	mirror.setup(&"dummy", defs)
+	var seen: Array = []
+	mirror.severed.connect(func(l, _i): seen.append(l))
+	mirror.apply_mask(limbs.mask())
+	_check(mirror.is_severed(&"head") and mirror.is_severed(&"legL") and not mirror.is_severed(&"armL") and seen.size() == 2, "a client mirror severs exactly what the mask says")
+	mirror.apply_mask(0)
+	_check(mirror.is_severed(&"head"), "a limb never grows back")
+	_check(DotNpcLimbs.defs_from_config(&"no_such_definition").is_empty(), "no configured limbs is an empty set, not an error")
+	var specs := DotNpcNetSync.limb_specs()
+	_check(specs.size() == 1 and specs[0]["property"] == &"net_limbs" and specs[0]["bits"] >= DotNpcLimbs.MAX_LIMBS, "replication carries the mask as one field")
+	_check(DotNpcGibs.subtree(sk, 0).size() == 4 and DotNpcGibs.subtree(sk, 2).size() == 1, "a limb's subtree is its bone and what hangs below")
+	body.queue_free()
+	_done()

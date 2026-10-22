@@ -10,5 +10,6 @@ extends RefCounted
 # 2: DotNpcInstance.seed, DotNpcSpawner.seed_base / seed_source / seed_for().
 # 3: DotNpcProfiles, DotNpcDef.from_profile, DotNpcDef.extra and menu.
 # 4: DotNpcProfiles.profile_schemas.
-const LEVEL := 4
+# 5: DotNpcLimbs, DotNpcGibs, DotNpcNetSync.limb_specs.
+const LEVEL := 5
 const OLDEST := 1
