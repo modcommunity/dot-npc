@@ -45,6 +45,12 @@ func setup(p_species: StringName, p_defs: Dictionary, p_view: Node3D = null) -> 
 	for k in p_defs:
 		if p_defs[k] is Dictionary and (p_defs[k] as Dictionary).get("bones") is Array and defs.size() < MAX_LIMBS:
 			defs[StringName(k)] = p_defs[k]
+	# A recycled body comes back whole: undo what an earlier life collapsed.
+	if not _gone.is_empty():
+		if view != null and view.has_method(&"restore_limbs"):
+			view.call(&"restore_limbs")
+		elif skeleton != null:
+			DotNpcGibs.restore(skeleton, model)
 	_health.clear()
 	_gone.clear()
 	for k in defs:
@@ -70,12 +76,13 @@ func mask() -> int:
 	return m
 
 
-## Client: brings the severed set to [param m]. Only ever severs (a limb never grows back).
+## Client: brings the severed set to [param m]. Only ever severs (a limb never grows back). The limbs were
+## lost before this machine saw them, so each shows a stump with no gib and no blood.
 func apply_mask(m: int) -> void:
 	var i := 0
 	for k in defs.keys():
 		if m & (1 << i) and not _gone.has(k):
-			sever(k, Vector3.INF, Vector3.ZERO)
+			sever(k, Vector3.INF, Vector3.ZERO, true)
 		i += 1
 
 
@@ -97,8 +104,13 @@ func limb_at(world_point: Vector3) -> StringName:
 
 ## Hurts the limb at [param world_point]. Returns the limb it severed, or `&""` (nothing there, or it held).
 func hit(world_point: Vector3, damage: float, impulse: Vector3 = Vector3.ZERO) -> StringName:
-	var k := limb_at(world_point)
-	if k == &"" or damage <= 0.0:
+	return hit_limb(limb_at(world_point), world_point, damage, impulse)
+
+
+## Hurts the named limb: for a caller whose hitbox already says which limb it was (overlapping regions can
+## make [method limb_at] name another). Same return as [method hit].
+func hit_limb(k: StringName, world_point: Vector3, damage: float, impulse: Vector3 = Vector3.ZERO) -> StringName:
+	if k == &"" or not defs.has(k) or _gone.has(k) or damage <= 0.0:
 		return &""
 	_health[k] = float(_health[k]) - damage * float((defs[k] as Dictionary).get("damage_scale", 1.0))
 	if float(_health[k]) > 0.0:
@@ -108,18 +120,23 @@ func hit(world_point: Vector3, damage: float, impulse: Vector3 = Vector3.ZERO) -
 
 
 ## Takes a limb off, whatever it has left. [param world_point] is where it was cut (`Vector3.INF` to use the
-## joint).
-func sever(limb: StringName, world_point: Vector3, impulse: Vector3) -> void:
+## joint). [param silent] shows only the stump (no gib, no blood), for a limb that was already gone.
+func sever(limb: StringName, world_point: Vector3, impulse: Vector3, silent := false) -> void:
 	if not defs.has(limb) or _gone.has(limb):
 		return
 	_gone[limb] = true
 	_health[limb] = 0.0
 	var d := defs[limb] as Dictionary
 	var at := world_point
-	if view != null and view.has_method(&"sever_limb"):
+	if view != null and silent and view.has_method(&"stump_limb"):
+		at = view.call(&"stump_limb", limb, d)
+	elif view != null and view.has_method(&"sever_limb"):
 		at = view.call(&"sever_limb", limb, d, impulse)
 	elif skeleton != null and model != null:
-		at = DotNpcGibs.sever(skeleton, model, "%s/%s" % [species, limb], limb, d, impulse)
+		at = DotNpcGibs.sever(skeleton, model, "%s/%s" % [species, limb], limb, d, impulse, silent)
+	if not at.is_finite():
+		var host := get_parent() as Node3D
+		at = host.global_position if host != null and host.is_inside_tree() else Vector3.ZERO
 	DotLog.debug(CHANNEL, "limb severed", {"species": String(species), "limb": String(limb)})
 	severed.emit(limb, {"point": at, "impulse": impulse, "def": d})
 

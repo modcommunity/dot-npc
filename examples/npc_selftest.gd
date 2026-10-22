@@ -19,7 +19,7 @@ const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 const CHOOSER := "res://fixtures/chooser_brain.gd"
 
-const CHECKS := 238 + 23 + 15
+const CHECKS := 238 + 23 + 15 + 6
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
@@ -2167,5 +2167,44 @@ func _test_limbs() -> void:
 	var specs := DotNpcNetSync.limb_specs()
 	_check(specs.size() == 1 and specs[0]["property"] == &"net_limbs" and specs[0]["bits"] >= DotNpcLimbs.MAX_LIMBS, "replication carries the mask as one field")
 	_check(DotNpcGibs.subtree(sk, 0).size() == 4 and DotNpcGibs.subtree(sk, 2).size() == 1, "a limb's subtree is its bone and what hangs below")
+	# hit_limb names the limb: overlapping regions cannot sever a different one.
+	var named := DotNpcLimbs.new()
+	body.add_child(named)
+	named.setup(&"dummy", defs)
+	_check(named.hit_limb(&"armL", Vector3(0, 1.7, 0), 100.0) == &"armL" and named.is_severed(&"armL") and not named.is_severed(&"head"), "hit_limb hurts the named limb, not the one the point is in")
+	_check(named.hit_limb(&"armL", Vector3.ZERO, 100.0) == &"" and named.hit_limb(&"nope", Vector3.ZERO, 100.0) == &"", "hit_limb ignores a gone or unknown limb")
+	# A late joiner shows the stump silently: no gib or blood path, and a finite point.
+	var stub := _LimbView.new()
+	body.add_child(stub)
+	var late := DotNpcLimbs.new()
+	body.add_child(late)
+	late.setup(&"dummy", defs, stub)
+	var infos: Array = []
+	late.severed.connect(func(_l, i): infos.append(i))
+	late.apply_mask(3)
+	_check(stub.severed.is_empty() and stub.stumps == [&"head", &"armL"], "apply_mask draws stumps, not severs", str(stub.stumps))
+	_check(infos.size() == 2 and is_finite((infos[0]["point"] as Vector3).x) and infos[0]["point"] != Vector3.INF, "a mask-applied limb reports a finite point")
+	late.sever(&"legL", Vector3(0, 1, 0), Vector3.UP)
+	_check(stub.severed == [&"legL"], "a live sever still takes the gib path")
+	# A recycled body starts whole.
+	late.setup(&"dummy", defs, stub)
+	_check(late.mask() == 0 and not late.is_severed(&"head") and stub.restores == 1, "setup resets the severed set and restores the view")
 	body.queue_free()
 	_done()
+
+
+class _LimbView extends Node3D:
+	var severed: Array = []
+	var stumps: Array = []
+	var restores := 0
+
+	func sever_limb(limb: StringName, _d: Dictionary, _impulse: Vector3) -> Vector3:
+		severed.append(limb)
+		return Vector3(0, 1, 0)
+
+	func stump_limb(limb: StringName, _d: Dictionary) -> Vector3:
+		stumps.append(limb)
+		return Vector3(0, 1, 0)
+
+	func restore_limbs() -> void:
+		restores += 1

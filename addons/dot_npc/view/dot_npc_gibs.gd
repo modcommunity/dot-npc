@@ -11,6 +11,9 @@ const MAX_GIBS := 24
 const GROUP := &"dot_npc_gibs"
 
 static var _mesh_cache: Dictionary = {}
+const PRISTINE := &"dot_npc_pristine_mesh"
+const COLLAPSED := &"dot_npc_collapsed_bones"
+const STUMP_PREFIX := "Stump_"
 
 
 static func drawn() -> bool:
@@ -78,8 +81,13 @@ static func collapse_bone(sk: Skeleton3D, model: Node, root: int, grow := 2.0) -
 				before.append(skinned(sk, mi, mi.mesh.surface_get_arrays(s)))
 			meshes.append([mi, before])
 	sk.set_bone_pose_scale(root, Vector3.ONE * 0.001)
+	var gone: Array = sk.get_meta(COLLAPSED, [])
+	gone.append(root)
+	sk.set_meta(COLLAPSED, gone)
 	for entry in meshes:
 		var mi: MeshInstance3D = entry[0]
+		if not mi.has_meta(PRISTINE):
+			mi.set_meta(PRISTINE, mi.mesh)
 		var src := mi.mesh as ArrayMesh
 		var dst := ArrayMesh.new()
 		var changed := false
@@ -116,10 +124,12 @@ static func limb_mesh(sk: Skeleton3D, model: Node, root: int, key: String) -> Ar
 	var mesh := ArrayMesh.new()
 	for m in model.find_children("*", "MeshInstance3D", true, false):
 		var mi := m as MeshInstance3D
-		if mi.mesh == null:
+		# The pristine mesh, never one an earlier sever trimmed: the gib is the whole limb.
+		var src: Mesh = mi.get_meta(PRISTINE, mi.mesh)
+		if src == null:
 			continue
-		for s in mi.mesh.get_surface_count():
-			var arrays := mi.mesh.surface_get_arrays(s)
+		for s in src.get_surface_count():
+			var arrays := src.surface_get_arrays(s)
 			var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
 			var bones: Variant = arrays[Mesh.ARRAY_BONES]
 			var weights: Variant = arrays[Mesh.ARRAY_WEIGHTS]
@@ -174,7 +184,7 @@ static func limb_mesh(sk: Skeleton3D, model: Node, root: int, key: String) -> Ar
 			mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, a)
 			var mat := mi.get_surface_override_material(s)
 			if mat == null:
-				mat = mi.mesh.surface_get_material(s)
+				mat = src.surface_get_material(s)
 			if mat != null and drawn():
 				mesh.surface_set_material(mesh.get_surface_count() - 1, mat)
 	var result: ArrayMesh = mesh if mesh.get_surface_count() > 0 else null
@@ -272,14 +282,14 @@ static func spawn_gib(sk: Skeleton3D, model: Node, key: String, root: int, limb:
 
 ## A raw cut on the part left behind, riding the parent bone: a flat-capped collar of flesh facing along the
 ## limb, a ring of pale muscle, a bone disc with a dark marrow dot, and a drip for a few seconds.
-static func add_stump(sk: Skeleton3D, root: int, d: Dictionary) -> Node3D:
+static func add_stump(sk: Skeleton3D, root: int, d: Dictionary, drip_blood := true) -> Node3D:
 	if not drawn():
 		return null
 	var parent := sk.get_bone_parent(root)
 	if parent < 0:
 		return null
 	var att := BoneAttachment3D.new()
-	att.name = "Stump_%s" % sk.get_bone_name(root)
+	att.name = "%s%s" % [STUMP_PREFIX, sk.get_bone_name(root)]
 	sk.add_child(att)
 	att.bone_idx = parent
 	var at := sk.get_bone_global_rest(parent).affine_inverse() * sk.get_bone_global_rest(root).origin
@@ -288,6 +298,8 @@ static func add_stump(sk: Skeleton3D, root: int, d: Dictionary) -> Node3D:
 	var cut := cut_face(r, dir)
 	cut.position = at + dir * r * 0.3
 	att.add_child(cut)
+	if not drip_blood:
+		return att
 	var drip := blood(false, Vector3.ZERO)
 	drip.position = at
 	att.add_child(drip)
@@ -339,13 +351,33 @@ static func marrow_material() -> StandardMaterial3D:
 ## Takes a limb off a drawn body: throws it as a gib, collapses its root bone and covers the cut. Returns the
 ## joint in world space, or `Vector3.INF` when the limb names no bone. [param key] names the cached limb mesh
 ## (definition id plus limb).
-static func sever(sk: Skeleton3D, model: Node, key: String, limb: StringName, d: Dictionary, impulse: Vector3) -> Vector3:
+static func sever(sk: Skeleton3D, model: Node, key: String, limb: StringName, d: Dictionary, impulse: Vector3, silent := false) -> Vector3:
 	var bones: Array = d.get("bones", [])
 	var root := sk.find_bone(String(bones[0])) if not bones.is_empty() else -1
 	if root < 0:
 		return Vector3.INF
 	var joint := sk.global_transform * sk.get_bone_global_pose(root).origin
-	spawn_gib(sk, model, key, root, limb, d, joint, impulse)
+	if not silent:
+		spawn_gib(sk, model, key, root, limb, d, joint, impulse)
 	collapse_bone(sk, model, root)
-	add_stump(sk, root, d)
+	add_stump(sk, root, d, not silent)
 	return joint
+
+
+## Undoes every [method sever] on [param sk]: bones back to full scale, the drawn meshes whole, stumps gone.
+## [param model] limits the mesh restore to that scene (default: the skeleton's siblings under its parent).
+static func restore(sk: Skeleton3D, model: Node = null) -> void:
+	for b in sk.get_meta(COLLAPSED, []):
+		sk.set_bone_pose_scale(int(b), Vector3.ONE)
+	sk.remove_meta(COLLAPSED)
+	for c in sk.get_children():
+		if c is BoneAttachment3D and String(c.name).begins_with(STUMP_PREFIX):
+			sk.remove_child(c)
+			c.queue_free()
+	var scope: Node = model if model != null else (sk.owner if sk.owner != null else sk.get_parent())
+	if scope == null:
+		return
+	for m in scope.find_children("*", "MeshInstance3D", true, false):
+		if m.has_meta(PRISTINE):
+			m.mesh = m.get_meta(PRISTINE)
+			m.remove_meta(PRISTINE)
