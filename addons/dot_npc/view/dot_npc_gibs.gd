@@ -30,6 +30,83 @@ static func subtree(sk: Skeleton3D, root: int) -> Dictionary:
 	return out
 
 
+## Vertices of one surface as the skeleton currently poses them.
+static func skinned(sk: Skeleton3D, mi: MeshInstance3D, arrays: Array) -> PackedVector3Array:
+	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var out := verts.duplicate()
+	var bi: Variant = arrays[Mesh.ARRAY_BONES]
+	var wi: Variant = arrays[Mesh.ARRAY_WEIGHTS]
+	var skin: Skin = mi.skin
+	if verts.is_empty() or skin == null or not (bi is PackedInt32Array) or not (wi is PackedFloat32Array):
+		return out
+	var per := (bi as PackedInt32Array).size() / verts.size()
+	var mats := []
+	for i in skin.get_bind_count():
+		var b := skin.get_bind_bone(i)
+		if b < 0:
+			b = sk.find_bone(skin.get_bind_name(i))
+		mats.append(sk.get_bone_global_pose(b) * skin.get_bind_pose(i) if b >= 0 else Transform3D.IDENTITY)
+	for v in verts.size():
+		var p := Vector3.ZERO
+		var total := 0.0
+		for k in per:
+			var w: float = (wi as PackedFloat32Array)[v * per + k]
+			var bind: int = (bi as PackedInt32Array)[v * per + k]
+			if w > 0.0 and bind < mats.size():
+				p += (mats[bind] as Transform3D) * verts[v] * w
+				total += w
+		if total > 0.0:
+			out[v] = p / total
+	return out
+
+
+static func _longest_edge(p: PackedVector3Array, a: int, b: int, c: int) -> float:
+	return maxf(p[a].distance_to(p[b]), maxf(p[b].distance_to(p[c]), p[c].distance_to(p[a])))
+
+
+## Collapses [param root]'s bone and drops every triangle of the drawn body that the collapse would drag into a
+## sheet (its longest edge grows past [param grow] times and by a visible amount). Skin weighted partly to the
+## collapsed bone (entrails, a belly flap) would otherwise stretch toward the joint. Each body gets its own copy
+## of the mesh, so the shared resource stays whole.
+static func collapse_bone(sk: Skeleton3D, model: Node, root: int, grow := 2.0) -> void:
+	var meshes: Array = []
+	for m in model.find_children("*", "MeshInstance3D", true, false):
+		var mi := m as MeshInstance3D
+		if mi.mesh is ArrayMesh and mi.skin != null:
+			var before := []
+			for s in mi.mesh.get_surface_count():
+				before.append(skinned(sk, mi, mi.mesh.surface_get_arrays(s)))
+			meshes.append([mi, before])
+	sk.set_bone_pose_scale(root, Vector3.ONE * 0.001)
+	for entry in meshes:
+		var mi: MeshInstance3D = entry[0]
+		var src := mi.mesh as ArrayMesh
+		var dst := ArrayMesh.new()
+		var changed := false
+		var floor_len := src.get_aabb().get_longest_axis_size() * 0.03
+		for s in src.get_surface_count():
+			var arrays := src.surface_get_arrays(s)
+			var mat := src.surface_get_material(s)
+			var after := skinned(sk, mi, arrays)
+			var was: PackedVector3Array = entry[1][s]
+			var idx: Variant = arrays[Mesh.ARRAY_INDEX]
+			var tris: PackedInt32Array = idx if idx is PackedInt32Array else PackedInt32Array(range(after.size()))
+			var kept := PackedInt32Array()
+			for t in range(0, tris.size() - 2, 3):
+				var e0 := _longest_edge(was, tris[t], tris[t + 1], tris[t + 2])
+				var e1 := _longest_edge(after, tris[t], tris[t + 1], tris[t + 2])
+				if e1 > e0 * grow and e1 - e0 > floor_len:
+					continue
+				kept.append_array(tris.slice(t, t + 3))
+			if kept.size() != tris.size():
+				changed = true
+			arrays[Mesh.ARRAY_INDEX] = kept if not kept.is_empty() else PackedInt32Array([0, 0, 0])
+			dst.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays, [], {}, src.surface_get_format(s) & Mesh.ARRAY_FLAG_USE_8_BONE_WEIGHTS)
+			dst.surface_set_material(s, mat)
+		if changed:
+			mi.mesh = dst
+
+
 ## The limb's triangles in skeleton space, centred on its joint, or null when it has none.
 static func limb_mesh(sk: Skeleton3D, model: Node, root: int, key: String) -> ArrayMesh:
 	if _mesh_cache.has(key):
@@ -179,13 +256,9 @@ static func spawn_gib(sk: Skeleton3D, model: Node, key: String, root: int, limb:
 		cs.shape = box
 		cs.position = aabb.get_center()
 		gib.add_child(cs)
-	var cap := MeshInstance3D.new()
-	var sphere := SphereMesh.new()
-	var r := float(d.get("radius", 0.3)) * 0.28
-	sphere.radius = r
-	sphere.height = r * 1.4
-	sphere.material = flesh_material()
-	cap.mesh = sphere
+	var par := sk.get_bone_parent(root)
+	var out := sk.get_bone_global_rest(root).origin - sk.get_bone_global_rest(par).origin if par >= 0 else Vector3.UP
+	var cap := cut_face(float(d.get("radius", 0.3)) * 0.42, -out.normalized() if out.length() > 0.001 else Vector3.DOWN)
 	gib.add_child(cap)
 	gib.linear_velocity = impulse + Vector3(randf_range(-1.0, 1.0), 2.5, randf_range(-1.0, 1.0))
 	gib.angular_velocity = Vector3(randf_range(-4.0, 4.0), randf_range(-4.0, 4.0), randf_range(-4.0, 4.0))
@@ -197,8 +270,8 @@ static func spawn_gib(sk: Skeleton3D, model: Node, key: String, root: int, limb:
 	return gib
 
 
-## A raw cut on the part left behind: wet flesh with a bone end, riding the parent bone, and a drip for a few
-## seconds.
+## A raw cut on the part left behind, riding the parent bone: a flat-capped collar of flesh facing along the
+## limb, a ring of pale muscle, a bone disc with a dark marrow dot, and a drip for a few seconds.
 static func add_stump(sk: Skeleton3D, root: int, d: Dictionary) -> Node3D:
 	if not drawn():
 		return null
@@ -210,30 +283,57 @@ static func add_stump(sk: Skeleton3D, root: int, d: Dictionary) -> Node3D:
 	sk.add_child(att)
 	att.bone_idx = parent
 	var at := sk.get_bone_global_rest(parent).affine_inverse() * sk.get_bone_global_rest(root).origin
-	var r := float(d.get("radius", 0.3)) * 0.3
-	var flesh := MeshInstance3D.new()
-	var s := SphereMesh.new()
-	s.radius = r
-	s.height = r * 1.6
-	s.material = flesh_material()
-	flesh.mesh = s
-	flesh.position = at
-	att.add_child(flesh)
-	var stub := MeshInstance3D.new()
-	var c := CylinderMesh.new()
-	c.top_radius = r * 0.3
-	c.bottom_radius = r * 0.35
-	c.height = r * 1.2
-	c.material = bone_material()
-	stub.mesh = c
-	stub.position = at
-	att.add_child(stub)
+	var r := float(d.get("radius", 0.3)) * 0.42
+	var dir := at.normalized() if at.length() > 0.001 else Vector3.UP
+	var cut := cut_face(r, dir)
+	cut.position = at + dir * r * 0.3
+	att.add_child(cut)
 	var drip := blood(false, Vector3.ZERO)
 	drip.position = at
 	att.add_child(drip)
 	drip.emitting = true
 	sk.get_tree().create_timer(4.0).timeout.connect(func(): if is_instance_valid(drip): drip.emitting = false)
 	return att
+
+
+## The flat cut itself at the origin, facing [param dir]: flesh collar behind it, a ring of muscle, a bone disc
+## and a dark marrow dot.
+static func cut_face(r: float, dir: Vector3) -> Node3D:
+	var cut := Node3D.new()
+	cut.transform = Transform3D(Basis(Quaternion(Vector3.UP, dir)), Vector3.ZERO)
+	cut.add_child(_disc(r, r * 1.1, -r * 0.55, flesh_material()))
+	cut.add_child(_disc(r * 0.88, r * 0.04, r * 0.02, muscle_material()))
+	cut.add_child(_disc(r * 0.34, r * 0.06, r * 0.05, bone_material()))
+	cut.add_child(_disc(r * 0.14, r * 0.07, r * 0.055, marrow_material()))
+	return cut
+
+
+static func _disc(radius: float, height: float, y: float, mat: Material) -> MeshInstance3D:
+	var c := CylinderMesh.new()
+	c.top_radius = radius
+	c.bottom_radius = radius * 1.04
+	c.height = height
+	c.radial_segments = 16
+	c.rings = 1
+	c.material = mat
+	var mi := MeshInstance3D.new()
+	mi.mesh = c
+	mi.position = Vector3(0.0, y, 0.0)
+	return mi
+
+
+static func muscle_material() -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color(0.72, 0.2, 0.2)
+	m.roughness = 0.35
+	return m
+
+
+static func marrow_material() -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color(0.3, 0.02, 0.03)
+	m.roughness = 0.3
+	return m
 
 
 ## Takes a limb off a drawn body: throws it as a gib, collapses its root bone and covers the cut. Returns the
@@ -246,6 +346,6 @@ static func sever(sk: Skeleton3D, model: Node, key: String, limb: StringName, d:
 		return Vector3.INF
 	var joint := sk.global_transform * sk.get_bone_global_pose(root).origin
 	spawn_gib(sk, model, key, root, limb, d, joint, impulse)
-	sk.set_bone_pose_scale(root, Vector3.ONE * 0.001)
+	collapse_bone(sk, model, root)
 	add_stump(sk, root, d)
 	return joint
