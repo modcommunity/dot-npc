@@ -42,6 +42,8 @@ npcs.set_candidates(players_as_candidates())
 npcs.tick(delta)
 ```
 
+`npcs.candidates()` reads back the list last handed in (read-only), for a pack that needs to know who the NPCs perceive.
+
 A definition:
 
 ```gdscript

@@ -19,7 +19,7 @@ const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 const CHOOSER := "res://fixtures/chooser_brain.gd"
 
-const CHECKS := 237
+const CHECKS := 238
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
@@ -1633,6 +1633,11 @@ func _test_brains() -> void:
 
 	_check(int(npc.brain.get(&"thinks")) > 0, "and a brain is ticked by the spawner")
 	_check(npc.has_target(), "and its NPC perceives what the host handed it")
+	_check(
+		spawner.candidates().size() == 1 and spawner.candidates()[0].id == &"p"
+			and spawner.candidates().size() == spawner.candidate_count(),
+		"candidates() returns what set_candidates was handed"
+	)
 	_check(
 		npc.position().distance_to(Vector3(0, 0, -8)) < 8.0,
 		"and it moved toward it",

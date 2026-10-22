@@ -351,6 +351,14 @@ func candidate_count() -> int:
 	return _candidates.size()
 
 
+## The candidates last handed to [method set_candidates], as the same array (not a copy: the
+## host built it, and a per-tick copy of every player is what a reader like a pack's damage
+## seam would otherwise pay). Treat it as read-only. Exists so a pack can read who the NPCs
+## perceive without reaching for the private field.
+func candidates() -> Array:
+	return _candidates
+
+
 # --- The tick -----------------------------------------------------------------
 
 ## One simulated tick: perceive, think, reclaim.
