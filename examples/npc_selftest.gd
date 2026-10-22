@@ -19,7 +19,7 @@ const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 const CHOOSER := "res://fixtures/chooser_brain.gd"
 
-const CHECKS := 238 + 22
+const CHECKS := 238 + 23
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
@@ -382,6 +382,7 @@ func _test_profiles() -> void:
 	_check(coded.validate().ok and coded.extra.is_empty(), "code-built definitions are untouched")
 	_check(_catalogue().size() == 5, "and the catalogue built from code is intact")
 	_check(DotNpcProfiles.schema().size() == 20, "the schema lists the common keys")
+	_check(DotNpcProfiles.profile_schemas()["npc"]["schema"].size() == 20, "profile_schemas names the npc kind for the validator")
 	# A set and its cached profiles point at each other; clear them or they leak at exit.
 	for set_to_clear in [addon_only, game_set]:
 		set_to_clear.clear_cache()

@@ -35,6 +35,11 @@ static func schema() -> Array:
 	]
 
 
+## Kind to schema for tools that validate profiles without a game (dot-core profile_check).
+static func profile_schemas() -> Dictionary:
+	return {"npc": {"schema": schema(), "children": {}}}
+
+
 ## A profile set for NPCs of [param game]; [param roots] overrides the config roots (tests).
 static func make_set(game: String, roots: PackedStringArray = PackedStringArray()) -> DotProfileSet:
 	var s := DotProfileSet.create(ADDON, game, KIND, schema())

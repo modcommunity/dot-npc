@@ -9,5 +9,6 @@ extends RefCounted
 # 1: everything before this file existed (an absent file reads as 1).
 # 2: DotNpcInstance.seed, DotNpcSpawner.seed_base / seed_source / seed_for().
 # 3: DotNpcProfiles, DotNpcDef.from_profile, DotNpcDef.extra and menu.
-const LEVEL := 3
+# 4: DotNpcProfiles.profile_schemas.
+const LEVEL := 4
 const OLDEST := 1

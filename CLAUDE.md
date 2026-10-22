@@ -6,6 +6,8 @@ Read the family [CLAUDE.md](../../CLAUDE.md) first; this file is only what is sp
 
 **Depends on dot-core and nothing else.** Not dot-net, dot-combat or dot-map: each is a seam a host wires up, and naming any of them would make this addon fail to parse in a project that does not have it.
 
+Profiles: `DotNpcProfiles` (the `npc` kind) offers `profile_schemas()`, so dot-core's `tools/profile_check.gd` (dot-ci `profiles: true`) validates a repo's `cfg/**/npc/*.yml` with no `--schema` script (API 4).
+
 ## Read before
 
 | Read | Before |
