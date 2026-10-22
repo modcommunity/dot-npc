@@ -130,6 +130,14 @@ enum Weight {
 
 @export var meta: Dictionary = {}
 
+@export_group("Profile")
+
+## Keys a brain reads that the schema does not know: the `extra:` block of a profile.
+@export var extra: Dictionary = {}
+
+## Spawn-menu hints from a profile's `menu:` block: `icon`, `sort`, `hidden`.
+@export var menu: Dictionary = {}
+
 
 static func make(p_id: StringName, p_scene: String) -> DotNpcDef:
 	var npc := DotNpcDef.new()
@@ -209,6 +217,10 @@ func to_dictionary() -> Dictionary:
 		out["permission"] = permission
 	if not enabled:
 		out["enabled"] = false
+	if not extra.is_empty():
+		out["extra"] = extra.duplicate(true)
+	if not menu.is_empty():
+		out["menu"] = menu.duplicate(true)
 	if not meta.is_empty():
 		# Duplicated: a Dictionary is a reference in GDScript, so handing this one out
 		# lets whoever serialises an NPC edit the shared definition.
@@ -245,7 +257,25 @@ static func from_dictionary(data: Dictionary) -> DotNpcDef:
 		(meta_value as Dictionary).duplicate(true) if meta_value is Dictionary else {}
 	)
 
+	var extra_value: Variant = data.get("extra", {})
+	npc.extra = (extra_value as Dictionary).duplicate(true) if extra_value is Dictionary else {}
+	var menu_value: Variant = data.get("menu", {})
+	npc.menu = (menu_value as Dictionary).duplicate(true) if menu_value is Dictionary else {}
+
 	return npc
+
+
+## Builds a definition from a loaded `npc` [DotProfile] (see [DotNpcProfiles]).
+static func from_profile(profile: DotProfile) -> DotNpcDef:
+	var data := profile.values.duplicate(true)
+	data["id"] = profile.id
+	data["extra"] = profile.extra
+	var menu_data: Dictionary = data.get("menu", {})
+	if str(menu_data.get("category", "")) != "":
+		data["category"] = menu_data["category"]
+	var weight_name := str(data.get("weight", "normal")).to_upper()
+	data["weight"] = maxi(Weight.keys().find(weight_name), 0)
+	return from_dictionary(data)
 
 
 static func _to_weight(value: Variant) -> Weight:
