@@ -19,7 +19,7 @@ const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 const CHOOSER := "res://fixtures/chooser_brain.gd"
 
-const CHECKS := 238 + 23 + 15 + 6
+const CHECKS := 238 + 23 + 15 + 6 + 3
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
@@ -513,6 +513,30 @@ func _test_nav_builder() -> void:
 			if street.points[i].distance_to(street.points[j]) < 0.5:
 				crowded += 1
 	_check(crowded == 0, "and overlapping floors still do not put two points in one place", "%d pairs" % crowded)
+
+	# A 35 degree hillside beside a flat yard: slope points climb it, a floor's step would not.
+	var hillside := PackedVector3Array()
+	var cliff := PackedVector3Array()
+	for x in range(0, 10):
+		for z in range(0, 4):
+			hillside.append(Vector3(x + 0.5, (x + 0.5) * 0.7, z + 0.5))
+			cliff.append(Vector3(x + 0.5, (x + 0.5) * 2.0, z + 10.5))
+	var hill := DotNpcNavBuilder.new()
+	hill.spacing = 1.0
+	hill.add_floor(AABB(Vector3(-4, 0, 0), Vector3(4, 0, 4)), 0.35)
+	hill.add_points(hillside, 1.0)
+	hill.add_points(cliff, 1.0)
+	var hill_graph := DotNpcNavGraph.new(hill.build(&"hill", "digest"))
+	_check(not hill_graph.find_path(Vector3(-3.5, 0.35, 2), Vector3(9.5, 6.65, 2), 1.0).is_empty(),
+		"slope points climb a hillside and join the floor at its foot")
+	_check(hill_graph.find_path(Vector3(0.5, 1.0, 10.5), Vector3(5.5, 11.0, 10.5), 1.0).is_empty(),
+		"and a slope steeper than their limit stays apart")
+	var flat := DotNpcNavBuilder.new()
+	flat.spacing = 1.0
+	for p in hillside:
+		flat.add_floor(AABB(Vector3(p.x - 0.5, 0, p.z - 0.5), Vector3(1, 0, 1)), p.y)
+	_check(DotNpcNavGraph.new(flat.build(&"steps", "digest")).find_path(Vector3(0.5, 0.35, 2), Vector3(9.5, 6.65, 2), 1.0).is_empty(),
+		"while the same hill as floors is a step too far per point")
 	_done()
 
 

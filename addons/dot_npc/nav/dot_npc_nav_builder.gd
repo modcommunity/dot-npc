@@ -71,6 +71,9 @@ var cover_range: float = 1.6
 ## Walkable areas as {aabb, height, area_id, flags} — the floors the map built.
 var _floors: Array = []
 
+## Loose points on uneven ground: {points, slope, area_id, flags}.
+var _point_sets: Array = []
+
 ## Solid boxes that a point may not be inside of.
 var _obstacles: Array[AABB] = []
 
@@ -93,6 +96,17 @@ func add_floor(
 		"area_id": area_id,
 		"flags": point_flags,
 	})
+
+
+## Adds points on uneven ground (a converted map's terrain). Two of them join where the rise
+## is at most [param max_slope] per metre between them; a floor point keeps the floor's step.
+func add_points(
+	points: PackedVector3Array,
+	max_slope: float,
+	area_id: int = DotNpcNavData.AREA_GROUND,
+	point_flags: int = 0
+) -> void:
+	_point_sets.append({"points": points, "slope": max_slope, "area_id": area_id, "flags": point_flags})
 
 
 ## Adds a box nothing may stand inside.
@@ -134,6 +148,7 @@ func build(map_id: StringName, digest: String) -> DotNpcNavData:
 	var positions: Array[Vector3] = []
 	var point_areas: Array[int] = []
 	var point_flags: Array[int] = []
+	var slopes := PackedFloat32Array()
 	var same_place := spacing * 0.5
 
 	for entry in _floors:
@@ -165,8 +180,23 @@ func build(map_id: StringName, digest: String) -> DotNpcNavData:
 				positions.append(p)
 				point_areas.append(floor_area_id)
 				point_flags.append(floor_flags)
+				slopes.append(0.0)
 
 			x += spacing
+
+	for entry in _point_sets:
+		var set_data: Dictionary = entry
+		for p: Vector3 in (set_data["points"] as PackedVector3Array):
+			if _blocked(p) or _already_placed(p, seen, positions, same_place):
+				continue
+			var cell := Vector2i(floori(p.x / spacing), floori(p.z / spacing))
+			var bucket: PackedInt32Array = seen.get(cell, PackedInt32Array())
+			bucket.append(positions.size())
+			seen[cell] = bucket
+			positions.append(p)
+			point_areas.append(int(set_data["area_id"]))
+			point_flags.append(int(set_data["flags"]))
+			slopes.append(float(set_data["slope"]))
 
 	for i in positions.size():
 		nav.add_point(positions[i], point_areas[i], point_flags[i])
@@ -214,7 +244,7 @@ func build(map_id: StringName, digest: String) -> DotNpcNavData:
 			# A height difference greater than a step is not a neighbour. Without this
 			# a walkway passing over a floor joins to it and an NPC paths through the
 			# air — the single most common thing wrong with a generated graph.
-			if absf(positions[i].y - positions[j].y) > spacing * 0.5:
+			if absf(positions[i].y - positions[j].y) > _rise(positions[i], positions[j], slopes[i], slopes[j]):
 				continue
 
 			if _crosses_obstacle(positions[i], positions[j]):
@@ -301,6 +331,13 @@ func _mark_cover(nav: DotNpcNavData) -> void:
 			nav.add_cover(p, best, DotNpcNavData.Cover.IN_COVER)
 
 
+## The most two neighbours may differ in height: a step on a floor, the slope on uneven ground.
+func _rise(a: Vector3, b: Vector3, slope_a: float, slope_b: float) -> float:
+	if slope_a <= 0.0 or slope_b <= 0.0:
+		return spacing * 0.5
+	return minf(slope_a, slope_b) * Vector2(a.x - b.x, a.z - b.z).length()
+
+
 ## Whether a point already placed is within [param within] of [param p], at the same height
 ## to within half a step.
 func _already_placed(p: Vector3, seen: Dictionary, positions: Array[Vector3], within: float) -> bool:
@@ -382,6 +419,7 @@ func _crosses_obstacle(a: Vector3, b: Vector3) -> bool:
 func describe() -> Dictionary:
 	return {
 		"floors": _floors.size(),
+		"point_sets": _point_sets.size(),
 		"obstacles": _obstacles.size(),
 		"links": _links.size(),
 		"cover": generate_cover,
