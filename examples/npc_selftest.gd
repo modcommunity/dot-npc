@@ -19,7 +19,7 @@ const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 const CHOOSER := "res://fixtures/chooser_brain.gd"
 
-const CHECKS := 238 + 23 + 15 + 6 + 3
+const CHECKS := 238 + 23 + 15 + 6 + 3 + 4
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
@@ -467,6 +467,33 @@ func _test_nav_builder() -> void:
 	_check(
 		not nav.is_navigable(Vector3(0, 0, 0), 0.5),
 		"and no point sits inside a wall"
+	)
+
+	# A cancelled build has no result, and the same builder then builds again from scratch.
+	var cancelled := DotNpcNavBuilder.new()
+	cancelled.spacing = 2.0
+	cancelled.generate_cover = true
+	cancelled.add_floor(AABB(Vector3(-10, 0, -10), Vector3(20, 0, 20)), 0.0)
+	cancelled.add_obstacle(AABB(Vector3(-1, 0, -10), Vector3(2, 3, 14)))
+	cancelled.begin(&"cancel_map", "digest")
+	cancelled.step(0.0001)
+	cancelled.cancel()
+	_check(not cancelled.step(0.0) and not cancelled.is_done() and cancelled.result() == null, "a cancelled build is not done and has no result")
+	_check(cancelled.is_cancelled(), "and reports cancelled")
+	cancelled.clearance = 1.5
+	cancelled.cover_range = 3.0
+	var rebuilt := cancelled.build(&"cancel_map", "digest")
+	_check(rebuilt != null and rebuilt.point_count() > 0 and not cancelled.is_cancelled(), "begin resets the cancel and the same builder builds again")
+	var fresh := DotNpcNavBuilder.new()
+	fresh.spacing = 2.0
+	fresh.generate_cover = true
+	fresh.clearance = 1.5
+	fresh.cover_range = 3.0
+	fresh.add_floor(AABB(Vector3(-10, 0, -10), Vector3(20, 0, 20)), 0.0)
+	fresh.add_obstacle(AABB(Vector3(-1, 0, -10), Vector3(2, 3, 14)))
+	_check(
+		fresh.build(&"cancel_map", "digest").point_count() == rebuilt.point_count(),
+		"and honours a changed clearance (obstacle cells are rebuilt)"
 	)
 
 	var two_storey := DotNpcNavBuilder.new()

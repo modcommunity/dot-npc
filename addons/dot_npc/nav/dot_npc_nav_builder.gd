@@ -171,20 +171,25 @@ func add_link(from: Vector3, to: Vector3, link_flags: int = 0) -> void:
 func build(map_id: StringName, digest: String) -> DotNpcNavData:
 	begin(map_id, digest)
 
-	while not step(0.0):
+	while not step(0.0) and not _cancelled:
 		pass
 
-	return _nav
+	return result()
 
 
 ## Whether [method step] has finished the build begun by [method begin].
 func is_done() -> bool:
-	return _phase == Phase.DONE
+	return _phase == Phase.DONE and not _cancelled
 
 
 ## The finished data; null until [method is_done].
 func result() -> DotNpcNavData:
-	return _nav if _phase == Phase.DONE else null
+	return _nav if _phase == Phase.DONE and not _cancelled else null
+
+
+## Whether [method cancel] was called since [method begin]; a cancelled build has no result.
+func is_cancelled() -> bool:
+	return _cancelled
 
 
 ## How far the build has got, 0 to 1, never going back. Safe to poll from any thread.
@@ -227,6 +232,9 @@ func begin(map_id: StringName, digest: String) -> void:
 	_near = {}
 	_cover_normal = PackedVector3Array()
 	_cover_has = PackedByteArray()
+	_cancelled = false
+	_obstacle_cells.clear()
+	_cover_cells.clear()
 	_unlinked = 0
 	_unlinked_examples = []
 	_floor_index = 0
@@ -251,6 +259,9 @@ func step(budget_ms: float = 0.0) -> bool:
 	_deadline = Time.get_ticks_usec() + int(budget_ms * 1000.0) if budget_ms > 0.0 else -1
 
 	while _phase != Phase.DONE:
+		if _cancelled:
+			return false
+
 		if _timed_out():
 			return false
 
@@ -413,6 +424,9 @@ func _step_edges() -> void:
 
 	if workers > 1 and _deadline < 0 and _edge_total >= EDGE_BATCH * 4:
 		_run_parallel(_edge_chunk, W_POINTS, W_EDGES, "edges")
+
+		if _cancelled:
+			return
 
 		for parts: Variant in _chunks:
 			for part: Variant in (parts as Array):
@@ -596,6 +610,9 @@ func _step_cover() -> void:
 
 	if workers > 1 and _deadline < 0 and total >= EDGE_BATCH * 4:
 		_run_parallel(_cover_chunk, W_POINTS + W_EDGES + W_LINKS, W_COVER, "cover")
+
+		if _cancelled:
+			return
 
 		for parts: Variant in _chunks:
 			for part: Variant in (parts as Array):
