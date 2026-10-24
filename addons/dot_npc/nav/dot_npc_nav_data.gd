@@ -574,6 +574,55 @@ func to_dictionary() -> Dictionary:
 	return out
 
 
+## The graph as compressed bytes, for [method from_cache_bytes]: packed arrays whole, no
+## per-element conversion, so a graph of a hundred thousand edges saves and loads in tens of ms.
+func to_cache_bytes() -> PackedByteArray:
+	var raw := var_to_bytes({
+		"format": FORMAT_VERSION, "map": String(map_id), "digest": source_digest,
+		"radius": point_radius, "spacing": grid_spacing, "points": points, "edges": edges,
+		"areas": areas, "flags": flags, "cover": cover_positions, "cover_normals": cover_normals,
+		"cover_flags": cover_flags, "meta": meta,
+	})
+	var out := PackedByteArray()
+	out.resize(4)
+	out.encode_u32(0, raw.size())
+	out.append_array(raw.compress(FileAccess.COMPRESSION_GZIP))
+	return out
+
+
+## A graph from [method to_cache_bytes], or null when the bytes are not one (truncated,
+## another format version): the caller builds it instead.
+static func from_cache_bytes(bytes: PackedByteArray) -> DotNpcNavData:
+	if bytes.size() < 8:
+		return null
+	# The raw size leads the bytes: decompress_dynamic fails on gzip in 4.7 and a bad size is no graph.
+	var size := bytes.decode_u32(0)
+	if size == 0 or size > 512 * 1024 * 1024:
+		return null
+	var raw := bytes.slice(4).decompress(size, FileAccess.COMPRESSION_GZIP)
+	if raw.size() != size:
+		return null
+	var data: Variant = bytes_to_var(raw)
+	if not data is Dictionary or int((data as Dictionary).get("format", 0)) != FORMAT_VERSION:
+		return null
+	var d := data as Dictionary
+	var nav := DotNpcNavData.new()
+	nav.map_id = StringName(str(d.get("map", "")))
+	nav.source_digest = str(d.get("digest", ""))
+	nav.point_radius = float(d.get("radius", 2.0))
+	nav.grid_spacing = float(d.get("spacing", 0.0))
+	nav.points = d.get("points", PackedVector3Array())
+	nav.edges = d.get("edges", PackedInt32Array())
+	nav.areas = d.get("areas", PackedInt32Array())
+	nav.flags = d.get("flags", PackedInt32Array())
+	nav.cover_positions = d.get("cover", PackedVector3Array())
+	nav.cover_normals = d.get("cover_normals", PackedVector3Array())
+	nav.cover_flags = d.get("cover_flags", PackedInt32Array())
+	nav.meta = d.get("meta", {})
+	nav.normalise_arrays()
+	return nav
+
+
 static func _any_nonzero(values: PackedInt32Array) -> bool:
 	for value in values:
 		if value != 0:
