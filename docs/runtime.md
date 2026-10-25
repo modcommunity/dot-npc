@@ -32,6 +32,8 @@ So the server owns every NPC, the client draws what it is told, and `DotNpcNetSy
 
 Perception is the single biggest cost in the addon, so it is **staggered**: `sense_period_ticks` spreads the passes across ticks, keyed on the NPC's position in the dictionary rather than on its instance id. Ids from one allocation run are consecutive and would put a whole wave in the same slot, which is the spike again wearing the appearance of a fix.
 
+**The candidate cap keeps the nearest.** Candidates out of reach (sight, or hearing within their loudness) take no slot; the rest are ranked nearest first and tested in that order until one is perceived, plus the committed target wherever it ranks. Ranking is pure over packed arrays (`DotNpcSenses.rank_many`), so `DotNpcSpawner.sense_workers` (a host copies `sv_threads_npc` into it) can run it on `DotParallel`; the tests and their rays stay on the main thread.
+
 ### `sight_scale` is per NPC, the definition's range per kind
 
 `DotNpcInstance.sight_scale` multiplies `DotNpcDef.sight_range` for one NPC. How far a kind can see belongs in the catalogue; how attentive this one is belongs to its character, and dot-npc-ai's brain writes the character's `alertness` here. Sight only: hearing is a loudness the game measured, and scaling it would be an NPC that hears a footstep further than the footstep travels.

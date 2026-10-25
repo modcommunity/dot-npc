@@ -19,13 +19,13 @@ const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 const CHOOSER := "res://fixtures/chooser_brain.gd"
 
-const CHECKS := 238 + 23 + 15 + 6 + 3 + 4 + 9
+const CHECKS := 238 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 9
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
 ## bailed out early after a failed guard is counted as not finished on purpose. The CHECKS
 ## total is the other half — see docs/testing.md.
-const SECTIONS := 35
+const SECTIONS := 37
 
 var _passed := 0
 var _failed := 0
@@ -64,6 +64,8 @@ func _run() -> void:
 	await _test_senses_basics()
 	_test_senses_commitment()
 	_test_senses_grace()
+	_test_senses_cap()
+	_test_senses_workers()
 	_test_target_since()
 	_test_spawning()
 	_test_spawning_2d()
@@ -1297,6 +1299,97 @@ func _test_target_since() -> void:
 		is_equal_approx(npc.target_since, 30.0),
 		"and the clock starts again (%.1f)" % npc.target_since
 	)
+	_done()
+
+
+## Ranking on worker threads commits every NPC exactly as the inline pass does.
+func _test_senses_workers() -> void:
+	_section("senses on workers")
+
+	var limits := _limits()
+	limits.sense_period_ticks = 1
+	limits.sense_candidate_cap = 4
+	limits.per_kind_cap = 100
+	limits.burst_cap = 100
+	var spawner := _spawner(limits)
+	var npcs: Array = []
+
+	for i in 40:
+		npcs.append(spawner.spawn(&"critter", Vector3(float(i % 8) * 3.0, 0, float(i / 8) * 3.0)))
+
+	var list: Array = []
+
+	for i in 60:
+		list.append(_candidate(StringName("c%d" % i),
+			Vector3(float(i % 10) * 2.5 - 2.0, 0, float(i / 10) * 2.5 - 2.0)))
+
+	spawner.set_candidates(list)
+	spawner.tick(1.0 / 60.0)
+	var inline := PackedStringArray()
+
+	for npc in npcs:
+		inline.append(String(npc.target_id))
+		npc.target_id = &""
+
+	spawner.sense_workers = 2
+	spawner.tick(1.0 / 60.0)
+	var threaded := PackedStringArray()
+
+	for npc in npcs:
+		threaded.append(String(npc.target_id))
+
+	_check(inline.count("") < 5, "nearly every NPC commits (the rest face away)", ",".join(inline))
+	_check(inline == threaded, "and ranking on workers commits each to the same target",
+		"%s against %s" % [",".join(inline), ",".join(threaded)])
+	_check(DotParallel.resolve_workers(2) == 0 or int(DotParallel.describe()["labels"].get("npc.senses", {}).get("pooled", 0)) > 0,
+		"the pass ran on the pool", str(DotParallel.describe()["labels"]))
+	spawner.queue_free()
+	_done()
+
+
+## The candidate cap keeps the nearest within reach, never the first in list order.
+func _test_senses_cap() -> void:
+	_section("senses: the candidate cap")
+
+	var senses := DotNpcSenses.new()
+	var def := DotNpcDef.make(&"seer", BODY)
+	def.require_line_of_sight = false
+	def.sight_half_angle_deg = 180.0
+	def.sight_range = 30.0
+
+	var npc := _loose_npc(def)
+	var list: Array = []
+
+	for i in 30:
+		list.append(_candidate(StringName("far%d" % i), Vector3(0, 0, -20.0 - 0.1 * i)))
+
+	list.append(_candidate(&"near", Vector3(0, 0, -3)))
+	_check(senses.update_target(npc, list, 0.0, 8) == &"near",
+		"past the cap the nearest is still seen", "got %s" % npc.target_id)
+
+	var out_of_reach: Array = []
+
+	for i in 30:
+		out_of_reach.append(_candidate(StringName("gone%d" % i), Vector3(0, 0, -100.0 - i)))
+
+	out_of_reach.append(_candidate(&"late", Vector3(0, 0, -25)))
+	var fresh := _loose_npc(def)
+	_check(senses.update_target(fresh, out_of_reach, 0.0, 8) == &"late",
+		"candidates out of reach take no slot of the cap")
+
+	var held := _loose_npc(def)
+	held.target_id = &"far29"
+	held.target_seen_at = 0.0
+	var crowd: Array = list.slice(0, 30)
+
+	for i in 10:
+		crowd.append(_candidate(StringName("mid%d" % i), Vector3(0, 0, -15.0 - 0.1 * i)))
+
+	senses.update_target(held, crowd, 1.0, 8)
+	_check(held.target_id == &"far29" and is_equal_approx(held.target_seen_at, 1.0),
+		"the committed target is tested even past the cap", "got %s" % held.target_id)
+	_check(senses.update_target(npc, list, 2.0, 0) == &"near",
+		"a cap of 0 still tests the nearest one")
 	_done()
 
 

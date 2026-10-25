@@ -165,6 +165,16 @@ var _held: Dictionary = {}
 ## design decision, and it belongs in the definition, not in a second senses object.
 var senses: DotNpcSenses = null
 
+## Worker threads ranking candidates for a perception pass ([method DotNpcSenses.rank], over
+## packed data); rays and commitment stay on this thread. 0 inline, -1 automatic. A host copies
+## its own setting here (dot-server's [code]sv_threads_npc[/code]); off on a machine without threads.
+var sense_workers: int = 0
+
+## NPCs ranked per worker task: fewer, larger tasks keep the fork cheap.
+const SENSE_CHUNK := 16
+
+var _packed := DotNpcSenses.Packed.new()
+
 ## How far a goal may move before a path is recomputed, in metres.
 var repath_drift: float = 2.5
 
@@ -384,6 +394,7 @@ func _perceive() -> void:
 
 	var period := maxi(limits.sense_period_ticks, 1)
 	var slot := 0
+	var due: Array[DotNpcInstance] = []
 
 	for id in _npcs:
 		var npc: DotNpcInstance = _npcs[id]
@@ -391,27 +402,57 @@ func _perceive() -> void:
 		if not npc.is_alive():
 			continue
 
-		# Staggered rather than everybody on the same tick.
-		#
-		# [b]This is the difference between a spike and a cost.[/b] Ninety NPCs
-		# sensing every fourth tick together is ninety raycast sweeps in one frame and
-		# nothing in the other three; the same work spread over the four is a quarter
-		# of the spike for exactly the same total. The slot is the NPC's position in
-		# the dictionary rather than its instance id, because instance ids from one
-		# allocation run are consecutive and would put every NPC of one wave in the
-		# same slot — which is the spike again, with the appearance of a fix.
+		# Staggered by dictionary position, never instance id: ids of one wave are consecutive
+		# and would put the whole wave on the same tick.
 		slot += 1
 
-		if (slot + _ticks) % period != 0:
+		if (slot + _ticks) % period != 0 or npc.def == null:
 			continue
 
-		var before := npc.target_id
-		var after := senses.update_target(
-			npc, _candidates, _now, limits.sense_candidate_cap
-		)
+		due.append(npc)
 
-		if after != before:
-			target_changed.emit(npc, after)
+	if due.is_empty():
+		return
+
+	_packed.fill(_candidates)
+	var n := due.size()
+	var here := PackedVector3Array()
+	var sight := PackedFloat64Array()
+	var hearing := PackedFloat64Array()
+	var own := PackedInt32Array()
+	here.resize(n)
+	sight.resize(n)
+	hearing.resize(n)
+	own.resize(n)
+
+	for i in n:
+		var npc := due[i]
+		here[i] = npc.position()
+		sight[i] = DotNpcSenses.reach_of(npc)
+		hearing[i] = npc.def.hearing_range
+		own[i] = _packed.faction_of(npc.def.faction)
+
+	var cap := limits.sense_candidate_cap
+	var positions := _packed.positions
+	var loudness := _packed.loudness
+	var factions := _packed.factions
+	var chunks := ceili(float(n) / SENSE_CHUNK)
+	var task := func(c: int) -> Array:
+		return DotNpcSenses.rank_many(c * SENSE_CHUNK, mini(n, (c + 1) * SENSE_CHUNK),
+			here, sight, hearing, own, positions, loudness, factions, cap)
+	var ranked := DotParallel.run(task, chunks, &"npc.senses", sense_workers)
+
+	for c in chunks:
+		var orders: Array = ranked[c]
+
+		for k in orders.size():
+			var npc := due[c * SENSE_CHUNK + k]
+			var before := npc.target_id
+			var after := senses.decide(npc, _candidates, orders[k],
+				_packed.index_of(npc.target_id), _now)
+
+			if after != before:
+				target_changed.emit(npc, after)
 
 
 func _think(delta: float) -> void:

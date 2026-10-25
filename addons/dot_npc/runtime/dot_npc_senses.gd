@@ -69,16 +69,19 @@ func perceives(npc: DotNpcInstance, cand: Candidate) -> bool:
 	if cand.faction == npc.def.faction:
 		return false
 
+	return _perceives_at(npc, cand, cand.position - npc.position())
+
+
+## [method perceives] past the faction test, with the offset already taken.
+func _perceives_at(npc: DotNpcInstance, cand: Candidate, to_target: Vector3) -> bool:
 	sight_checks += 1
 
-	var to_target := cand.position - npc.position()
 	var distance := to_target.length()
 
 	if distance <= 0.0001:
 		return true
 
-	# Hearing first: it is a single compare and it needs no raycast, so an NPC that
-	# can hear something never pays for the cone or the cast.
+	# Hearing first: one compare and no raycast.
 	if distance <= minf(npc.def.hearing_range, cand.loudness):
 		return true
 
@@ -130,42 +133,158 @@ func _has_line_of_sight(npc: DotNpcInstance, cand: Candidate) -> bool:
 
 ## Picks or keeps a target for [param npc]. Returns its id, or empty for none.
 ##
-## [param now] is simulated seconds, never a wall clock: an NPC's grace period must be
-## the same on a server that stalls for a second as on one that does not.
+## [param now] is simulated seconds, never a wall clock. Candidates within reach (sight or
+## hearing) are tested nearest first, at most [param candidate_cap], plus the committed one.
 func update_target(npc: DotNpcInstance, candidates: Array, now: float,
 		candidate_cap: int = 32) -> StringName:
-	if npc == null or not npc.is_alive():
+	if npc == null or not npc.is_alive() or npc.def == null:
 		return &""
 
+	var packed := Packed.new()
+	packed.fill(candidates)
+	var held := packed.index_of(npc.target_id)
+	var order := rank(npc.position(), reach_of(npc), npc.def.hearing_range,
+		packed.faction_of(npc.def.faction), packed, candidate_cap)
+	return decide(npc, candidates, order, held, now)
+
+
+## Candidates as packed arrays, built once a tick on the main thread: what [method rank] reads,
+## on any thread.
+class Packed:
+	extends RefCounted
+
+	var positions := PackedVector3Array()
+	var loudness := PackedFloat64Array()
+	var factions := PackedInt32Array()
+	var _faction_ids: Dictionary = {}
+	var _index: Dictionary = {}
+
+	func fill(candidates: Array) -> void:
+		var n := candidates.size()
+		positions.resize(n)
+		loudness.resize(n)
+		factions.resize(n)
+		_faction_ids.clear()
+		_index.clear()
+
+		for i in n:
+			var cand := candidates[i] as Candidate
+
+			if cand == null:
+				factions[i] = -2
+				loudness[i] = 0.0
+				continue
+
+			positions[i] = cand.position
+			loudness[i] = cand.loudness
+			factions[i] = _faction_ids.get_or_add(cand.faction, _faction_ids.size())
+			if not _index.has(cand.id):
+				_index[cand.id] = i
+
+	## The faction's number in [member factions], or -1 when no candidate has it.
+	func faction_of(faction: StringName) -> int:
+		return _faction_ids.get(faction, -1)
+
+	## The first candidate with [param id], or -1.
+	func index_of(id: StringName) -> int:
+		return -1 if id == &"" else int(_index.get(id, -1))
+
+
+## How far [param npc] sees, after its [member DotNpcInstance.sight_scale].
+static func reach_of(npc: DotNpcInstance) -> float:
+	return npc.def.sight_range * maxf(npc.sight_scale, 0.0)
+
+
+## The candidates an NPC at [param here] could perceive by range alone, nearest first, at most
+## [param cap]: [method rank_many] for one NPC.
+static func rank(here: Vector3, sight: float, hearing: float, own_faction: int,
+		packed: Packed, cap: int) -> PackedInt32Array:
+	return rank_many(0, 1, PackedVector3Array([here]), PackedFloat64Array([sight]),
+		PackedFloat64Array([hearing]), PackedInt32Array([own_faction]),
+		packed.positions, packed.loudness, packed.factions, cap)[0]
+
+
+## [method rank] for NPCs [param from] to [param to] (exclusive) of the per-NPC arrays, one
+## [PackedInt32Array] each. Pure over packed data, so it may run on a worker thread.
+static func rank_many(from: int, to: int, here: PackedVector3Array, sight: PackedFloat64Array,
+		hearing: PackedFloat64Array, own: PackedInt32Array, positions: PackedVector3Array,
+		loudness: PackedFloat64Array, factions: PackedInt32Array, cap: int) -> Array:
+	var out: Array = []
+	var count := positions.size()
+	var keep := maxi(cap, 1)
+
+	for j in range(from, to):
+		var at := here[j]
+		var seen := sight[j]
+		var heard := hearing[j]
+		var mine := own[j]
+		var keys := PackedInt64Array()
+
+		for i in count:
+			var f := factions[i]
+
+			if f == mine or f == -2:
+				continue
+
+			var d2 := at.distance_squared_to(positions[i])
+			var reach := maxf(seen, minf(heard, loudness[i]))
+
+			# Out of reach is never perceived, so it never takes a slot of the cap.
+			if d2 > reach * reach and d2 > 0.00000001:
+				continue
+
+			# Distance in 1/1024 m^2 above the index: one native sort is the nearest-first order.
+			keys.append((int(d2 * 1024.0) << 20) | i)
+
+		keys.sort()
+		var order := PackedInt32Array()
+		order.resize(mini(keys.size(), keep))
+
+		for r in order.size():
+			order[r] = keys[r] & 0xFFFFF
+
+		out.append(order)
+
+	return out
+
+
+## Commits [param npc] given [param order] from [method rank] over [param candidates]:
+## tests in order until one is perceived (the nearest, so nothing further can be better), and
+## the committed candidate ([param held], its index or -1) too. Main thread: it casts rays.
+func decide(npc: DotNpcInstance, candidates: Array, order: PackedInt32Array, held: int,
+		now: float) -> StringName:
+	if npc == null or not npc.is_alive() or npc.def == null:
+		return &""
+
+	var here := npc.position()
 	var best: Candidate = null
 	var best_distance := INF
 	var committed: Candidate = null
 	var committed_distance := INF
-	var considered := 0
+	var held_tested := false
 
-	for entry in candidates:
-		if considered >= candidate_cap:
+	for index in order:
+		var cand := candidates[index] as Candidate
+
+		if index == held:
+			held_tested = true
+
+		if _perceives_at(npc, cand, cand.position - here):
+			best = cand
+			best_distance = here.distance_to(cand.position)
+
+			if index == held:
+				committed = cand
+				committed_distance = best_distance
 			break
 
-		var cand := entry as Candidate
+	if not held_tested and held >= 0 and held < candidates.size():
+		var cand := candidates[held] as Candidate
 
-		if cand == null:
-			continue
-
-		considered += 1
-
-		if not perceives(npc, cand):
-			continue
-
-		var d := npc.position().distance_to(cand.position)
-
-		if cand.id == npc.target_id:
+		if cand != null and cand.id == npc.target_id and cand.faction != npc.def.faction \
+				and _perceives_at(npc, cand, cand.position - here):
 			committed = cand
-			committed_distance = d
-
-		if d < best_distance:
-			best_distance = d
-			best = cand
+			committed_distance = here.distance_to(cand.position)
 
 	if committed != null:
 		npc.target_seen_at = now
