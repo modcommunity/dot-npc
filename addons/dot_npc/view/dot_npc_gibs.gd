@@ -276,7 +276,7 @@ static func spawn_gib(sk: Skeleton3D, model: Node, key: String, root: int, limb:
 	gib.add_child(spray)
 	spray.emitting = true
 	var life := float(d.get("gib_seconds", 14.0))
-	gib.get_tree().create_timer(life).timeout.connect(func(): if is_instance_valid(gib): gib.queue_free())
+	gib.get_tree().create_timer(life).timeout.connect(_free_weak.bind(weakref(gib)))
 	return gib
 
 
@@ -304,7 +304,7 @@ static func add_stump(sk: Skeleton3D, root: int, d: Dictionary, drip_blood := tr
 	drip.position = at
 	att.add_child(drip)
 	drip.emitting = true
-	sk.get_tree().create_timer(4.0).timeout.connect(func(): if is_instance_valid(drip): drip.emitting = false)
+	sk.get_tree().create_timer(4.0).timeout.connect(_stop_weak.bind(weakref(drip)))
 	return att
 
 
@@ -381,3 +381,16 @@ static func restore(sk: Skeleton3D, model: Node = null) -> void:
 		if m.has_meta(PRISTINE):
 			m.mesh = m.get_meta(PRISTINE)
 			m.remove_meta(PRISTINE)
+
+
+## Timer callbacks hold a WeakRef: a lambda capturing the node itself logs "Lambda capture was freed" when the node is gone first.
+static func _free_weak(ref: WeakRef) -> void:
+	var n := ref.get_ref() as Node
+	if n != null:
+		n.queue_free()
+
+
+static func _stop_weak(ref: WeakRef) -> void:
+	var p := ref.get_ref() as CPUParticles3D
+	if p != null:
+		p.emitting = false
