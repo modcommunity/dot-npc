@@ -413,6 +413,11 @@ func set_candidates(candidates: Array) -> void:
 			_candidate_positions[cand.id] = cand.position
 
 
+## Every candidate's position from the last [method set_candidates] (what a level-of-detail scheduler measures from).
+func candidate_positions() -> Array:
+	return _candidate_positions.values()
+
+
 ## Where a candidate was when the list was last set, or [param fallback].
 func candidate_position(id: StringName, fallback: Vector3 = Vector3.ZERO) -> Vector3:
 	var found: Variant = _candidate_positions.get(id)
@@ -455,6 +460,7 @@ func _perceive() -> void:
 		return
 
 	var period := maxi(limits.sense_period_ticks, 1)
+	var quiet_period := period * maxi(limits.sense_quiet_mult, 1)
 	var slot := 0
 	var due: Array[DotNpcInstance] = []
 
@@ -468,7 +474,9 @@ func _perceive() -> void:
 		# and would put the whole wave on the same tick.
 		slot += 1
 
-		if (slot + _ticks) % period != 0 or npc.def == null:
+		var every := quiet_period if npc.sense_quiet and not npc.has_target() else period
+
+		if (slot + _ticks) % every != 0 or npc.def == null:
 			continue
 
 		due.append(npc)
@@ -510,6 +518,7 @@ func _perceive() -> void:
 		for k in orders.size():
 			var npc := due[c * SENSE_CHUNK + k]
 			var before := npc.target_id
+			npc.sense_quiet = orders[k].is_empty()
 			var after := senses.decide(npc, _candidates, orders[k],
 				_packed.index_of(npc.target_id), _now)
 

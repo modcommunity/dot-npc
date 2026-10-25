@@ -34,6 +34,8 @@ Perception is the single biggest cost in the addon, so it is **staggered**: `sen
 
 **The candidate cap keeps the nearest.** Candidates out of reach (sight, or hearing within their loudness) take no slot; the rest are ranked nearest first and tested in that order until one is perceived, plus the committed target wherever it ranks. Ranking is pure over packed arrays (`DotNpcSenses.rank_many`), so `DotNpcSpawner.sense_workers` (a host copies `sv_threads_npc` into it) can run it on `DotParallel`; the tests and their rays stay on the main thread.
 
+**A quiet NPC senses less often.** `DotNpcLimits.sense_quiet_mult` (default 1, off) multiplies `sense_period_ticks` for an NPC whose last pass found nobody in reach and that holds no target; the moment a candidate comes in reach it is back on the normal period, so detection is late by at most `(mult - 1) * period` ticks. dot-game's `DotGameNpcLod` sets it from the `npc_sense_quiet` cvar.
+
 ### `sight_scale` is per NPC, the definition's range per kind
 
 `DotNpcInstance.sight_scale` multiplies `DotNpcDef.sight_range` for one NPC. How far a kind can see belongs in the catalogue; how attentive this one is belongs to its character, and dot-npc-ai's brain writes the character's `alertness` here. Sight only: hearing is a loudness the game measured, and scaling it would be an NPC that hears a footstep further than the footstep travels.

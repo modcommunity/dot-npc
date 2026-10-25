@@ -19,13 +19,13 @@ const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 const CHOOSER := "res://fixtures/chooser_brain.gd"
 
-const CHECKS := 238 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 2 + 11
+const CHECKS := 238 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
 ## bailed out early after a failed guard is counted as not finished on purpose. The CHECKS
 ## total is the other half — see docs/testing.md.
-const SECTIONS := 38
+const SECTIONS := 39
 
 var _passed := 0
 var _failed := 0
@@ -66,6 +66,7 @@ func _run() -> void:
 	_test_senses_grace()
 	_test_senses_cap()
 	_test_senses_workers()
+	_test_senses_quiet()
 	_test_target_since()
 	_test_spawning()
 	_test_spawning_2d()
@@ -1344,6 +1345,72 @@ func _test_senses_workers() -> void:
 		"%s against %s" % [",".join(inline), ",".join(threaded)])
 	_check(DotParallel.resolve_workers(2) == 0 or int(DotParallel.describe()["labels"].get("npc.senses", {}).get("pooled", 0)) > 0,
 		"the pass ran on the pool", str(DotParallel.describe()["labels"]))
+	spawner.queue_free()
+	_done()
+
+
+## An NPC that found nobody senses less often, and notices a newcomer within the longer period.
+func _test_senses_quiet() -> void:
+	_section("senses: the quiet period")
+
+	var limits := _limits()
+	limits.sense_period_ticks = 1
+	limits.sense_quiet_mult = 4
+	limits.per_kind_cap = 100
+	limits.burst_cap = 100
+	var spawner := _spawner(limits)
+	var npcs: Array = []
+
+	for i in 8:
+		npcs.append(spawner.spawn(&"critter", Vector3(float(i) * 0.3, 0, 0)))
+
+	spawner.set_candidates([])
+
+	for _t in 4:
+		spawner.tick(1.0 / 60.0)
+
+	var quiet := 0
+
+	for npc in npcs:
+		quiet += 1 if npc.sense_quiet else 0
+
+	_check(quiet == npcs.size(), "with nobody about every NPC goes quiet (%d of %d)" % [quiet, npcs.size()])
+
+	spawner.set_candidates([_candidate(&"p", Vector3(1.0, 0, -3.0))])
+	var first := -1
+	var last := -1
+
+	for t in 8:
+		spawner.tick(1.0 / 60.0)
+		var seen := 0
+
+		for npc in npcs:
+			seen += 1 if npc.target_id == &"p" else 0
+
+		if seen > 0 and first < 0:
+			first = t
+
+		if seen == npcs.size() and last < 0:
+			last = t
+
+	_check(first >= 0 and last >= 0 and last < 4, "a newcomer is noticed by all within the quiet period (first %d, last %d)" % [first, last])
+	_check(first < last, "and the quiet ones are staggered, not all on one tick (%d, %d)" % [first, last])
+
+	spawner.set_candidates([])
+	limits.sense_quiet_mult = 1
+
+	for npc in npcs:
+		npc.target_id = &""
+		npc.sense_quiet = true
+
+	spawner.set_candidates([_candidate(&"p", Vector3(1.0, 0, -3.0))])
+	spawner.tick(1.0 / 60.0)
+	var now := 0
+
+	for npc in npcs:
+		now += 1 if npc.target_id == &"p" else 0
+
+	_check(now == npcs.size(), "with the multiplier at 1 every NPC senses each tick again (%d)" % now)
 	spawner.queue_free()
 	_done()
 

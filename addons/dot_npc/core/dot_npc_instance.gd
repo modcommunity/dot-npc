@@ -111,6 +111,9 @@ var target_since: float = 0.0
 ## be an NPC that hears a footstep further than the footstep travels.
 var sight_scale: float = 1.0
 
+## The last perception pass found nothing within reach (see [member DotNpcLimits.sense_quiet_mult]).
+var sense_quiet: bool = false
+
 ## The brain, if the definition named one. Never a `class_name`.
 var brain: Object = null
 

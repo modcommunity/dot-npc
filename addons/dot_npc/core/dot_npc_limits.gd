@@ -67,6 +67,12 @@ extends DotConfig
 ## costs and lowering it only makes a distant target invisible.
 @export_range(1, 256, 1) var sense_candidate_cap: int = 32
 
+## An NPC with no target whose last pass found nothing within its reach senses every
+## `sense_period_ticks * sense_quiet_mult` ticks. 1 = off (every NPC at the plain period).
+## A far zombie costs a pass that finds nobody; a sound or a player arriving is noticed
+## up to that much later, so keep it small (2-4).
+@export_range(1, 16, 1) var sense_quiet_mult: int = 1
+
 @export_group("Navigation")
 
 ## Whether a spawn point must be on the map's navigation data. See [DotNpcNavData].
