@@ -2,6 +2,8 @@
 
 **What an NPC is.** A catalogue of definitions, spawning with a population budget, health and damage, a perception layer that commits to a target, and navigation generated from the constants a code-built map was drawn from. 3D and 2D (the XZ plane).
 
+Also requires **dot-profile** (`DotProfileSet`, `DotProfile`, `DotProfileRuntime`, split from dot-core): link `addons/dot_profile` next to `addons/dot_core`.
+
 Read the family [CLAUDE.md](../../CLAUDE.md) first; this file is only what is specific to NPCs. How one decides is dot-npc-ai; population and pacing are dot-npc-ai-director.
 
 **Depends on dot-core and nothing else.** Not dot-net, dot-combat or dot-map: each is a seam a host wires up, and naming any of them would make this addon fail to parse in a project that does not have it.
