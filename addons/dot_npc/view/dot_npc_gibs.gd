@@ -254,7 +254,8 @@ static func spawn_gib(sk: Skeleton3D, model: Node, key: String, root: int, limb:
 	if not DotNpcGore.gibs_enabled():
 		return null
 	# At the cap the oldest gib is reused, not freed and rebuilt: a crowd of kills costs no allocation churn.
-	var live := world.get_tree().get_nodes_in_group(GROUP)
+	# A gib already freed this frame is still in the group: never count or reuse it.
+	var live := world.get_tree().get_nodes_in_group(GROUP).filter(func(n: Node) -> bool: return not n.is_queued_for_deletion())
 	var gib: RigidBody3D = null
 	while live.size() >= DotNpcGore.max_gibs:
 		var oldest := live[0] as RigidBody3D

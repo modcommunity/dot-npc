@@ -19,7 +19,7 @@ const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 const CHOOSER := "res://fixtures/chooser_brain.gd"
 
-const CHECKS := 238 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13
+const CHECKS := 238 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 2
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
@@ -2377,6 +2377,15 @@ func _test_gore() -> void:
 	DotNpcGore.level = 0
 	DotNpcGore.view_cap = 3
 	_check(DotNpcGore.drawn_level() == 0, "a rule of 0 caps what a player can ask to see")
+	DotNpcGore.level = 2
+	DotNpcGore.view_cap = 0
+	var hidden: DotNpcLimbs = make.call()
+	hidden.apply_mask(1)
+	_check(hidden.mask() == 0, "a player's cap of 0 draws no stump from a replicated mask")
+	DotNpcGore.level = 0
+	DotNpcGore.view_cap = 3
+	hidden.sever(&"armL", Vector3.INF, Vector3.ZERO)
+	_check(hidden.mask() == 0, "level 0: sever() takes nothing either")
 	DotNpcGore.reset()
 	DotNpcGore.max_wounds = 0
 	_check(not DotNpcGore.wounds_enabled() and DotNpcGibs.add_wound(null, Vector3.ZERO) == null and DotNpcGibs.add_pool(null, Vector3.ZERO) == null,
@@ -2385,6 +2394,7 @@ func _test_gore() -> void:
 	off.queue_free()
 	soft.queue_free()
 	capped.queue_free()
+	hidden.queue_free()
 	_done()
 
 

@@ -79,7 +79,8 @@ func mask() -> int:
 ## Client: brings the severed set to [param m]. Only ever severs (a limb never grows back). The limbs were
 ## lost before this machine saw them, so each shows a stump with no gib and no blood.
 func apply_mask(m: int) -> void:
-	if not DotNpcGore.dismember_enabled():
+	# The drawn level, not the rule: a player's view_cap 0 sees no stumps either.
+	if DotNpcGore.drawn_level() < DotNpcGore.STUMPS:
 		return
 	var i := 0
 	for k in defs.keys():
@@ -125,7 +126,7 @@ func hit_limb(k: StringName, world_point: Vector3, damage: float, impulse: Vecto
 ## Takes a limb off, whatever it has left. [param world_point] is where it was cut (`Vector3.INF` to use the
 ## joint). [param silent] shows only the stump (no gib, no blood), for a limb that was already gone.
 func sever(limb: StringName, world_point: Vector3, impulse: Vector3, silent := false) -> void:
-	if not defs.has(limb) or _gone.has(limb):
+	if not defs.has(limb) or _gone.has(limb) or not DotNpcGore.dismember_enabled():
 		return
 	_gone[limb] = true
 	_health[limb] = 0.0
