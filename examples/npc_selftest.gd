@@ -19,13 +19,13 @@ const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 const CHOOSER := "res://fixtures/chooser_brain.gd"
 
-const CHECKS := 238 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 2
+const CHECKS := 238 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 2 + 11
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
 ## bailed out early after a failed guard is counted as not finished on purpose. The CHECKS
 ## total is the other half — see docs/testing.md.
-const SECTIONS := 37
+const SECTIONS := 38
 
 var _passed := 0
 var _failed := 0
@@ -75,6 +75,7 @@ func _run() -> void:
 	_test_spawn_interval()
 	_test_navigable_spawn()
 	_test_spawner_pathing()
+	_test_path_workers()
 	_test_brains()
 	_test_stable_seeds()
 	_test_brains_are_released()
@@ -1827,6 +1828,144 @@ func _test_spawner_pathing() -> void:
 	_check(path_flag.reaches_goal(), "and a complete path says it reaches its goal")
 
 	spawner.queue_free()
+	_done()
+
+
+func _test_path_workers() -> void:
+	_section("path workers")
+
+	var builder := DotNpcNavBuilder.new()
+	builder.spacing = 2.0
+	builder.generate_cover = false
+	builder.add_floor(AABB(Vector3(-20, 0, -20), Vector3(40, 0, 40)), 0.0)
+	builder.add_floor(
+		AABB(Vector3(20, 0, -2), Vector3(10, 0, 4)), 0.0,
+		DotNpcNavData.AREA_GROUND, DotNpcNavData.Flag.CROUCH
+	)
+	builder.add_floor(AABB(Vector3(30, 0, -8), Vector3(16, 0, 16)), 0.0)
+	builder.add_floor(AABB(Vector3(60, 0, 60), Vector3(6, 0, 6)), 0.0)
+
+	for k in 3:
+		builder.add_obstacle(AABB(Vector3(-12 + k * 10, 0, -16 + (k % 2) * 8), Vector3(1, 3, 24)))
+
+	var data := builder.build(&"workers", "digest")
+	var graph := DotNpcNavGraph.new(data)
+	var crouchless := DotNpcNavFilter.new()
+	crouchless.exclude_flags = DotNpcNavData.Flag.CROUCH
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 11
+	var goals: Array[Vector3] = [Vector3(40, 0, 0), Vector3(62, 0, 62), Vector3(500, 0, 500)]
+	var queries: Array = []
+
+	for i in 48:
+		var q := DotNpcNavGraph.PathQuery.new()
+		q.from = Vector3(rng.randf_range(-18, 18), 0, rng.randf_range(-18, 18))
+		q.to = goals[i % 3] if i % 4 == 0 else Vector3(rng.randf_range(-18, 44), 0, rng.randf_range(-18, 18))
+		q.filter = crouchless if i % 2 == 0 else null
+		q.snap_radius = 3.0
+		q.allow_partial = i % 3 != 0
+		q.smooth = i % 5 != 0
+		q.horizon = 16 if i % 7 == 0 else 0
+		queries.append(q)
+
+	# What each query gets asked alone, the way path_toward always asked it.
+	var alone: Array = []
+	var partials: Array = []
+	var before := Vector2i(graph.searches, graph.failures)
+
+	for q: DotNpcNavGraph.PathQuery in queries:
+		graph.filter = q.filter
+		alone.append(
+			graph.find_smooth_path(q.from, q.to, q.snap_radius, q.allow_partial, q.horizon) if q.smooth
+			else graph.find_path(q.from, q.to, q.snap_radius, q.allow_partial)
+		)
+		partials.append(graph.last_partial)
+
+	graph.filter = null
+	var counted := Vector2i(graph.searches, graph.failures) - before
+	var kinds := {"empty": 0, "partial": 0, "whole": 0}
+
+	for i in alone.size():
+		var key := "empty" if (alone[i] as PackedVector3Array).is_empty() else ("partial" if partials[i] else "whole")
+		kinds[key] += 1
+
+	_check(
+		kinds["empty"] > 0 and kinds["partial"] > 0 and kinds["whole"] > 0,
+		"the batch covers whole, partial and unreachable answers", str(kinds)
+	)
+
+	for workers in [0, 4]:
+		var searched := Vector2i(graph.searches, graph.failures)
+		graph.find_paths(queries, workers)
+		var same := 0
+
+		for i in queries.size():
+			var q: DotNpcNavGraph.PathQuery = queries[i]
+			if q.points == alone[i] and q.partial == partials[i]:
+				same += 1
+
+		_check(
+			same == queries.size(),
+			"find_paths with %d workers answers each query as find_path alone does" % workers,
+			"%d of %d the same" % [same, queries.size()]
+		)
+		_check(
+			Vector2i(graph.searches, graph.failures) - searched == counted and graph.filter == null,
+			"and counts searches and failures as they do, and restores the filter (%d workers)" % workers,
+			"%s against %s" % [Vector2i(graph.searches, graph.failures) - searched, counted]
+		)
+
+	# The spawner: off finds inline as it always did; on queues and answers at the end of the think.
+	var limits := _limits()
+	limits.spawn_snap_radius = 3.0
+	var spawners: Array[DotNpcSpawner] = [_spawner(limits), _spawner(limits)]
+	spawners[1].path_workers = 4
+	var paths: Array = [[], []]
+
+	for s in 2:
+		spawners[s].set_nav_data(data)
+		for i in 12:
+			var npc := spawners[s].spawn(&"walker", (queries[i] as DotNpcNavGraph.PathQuery).from)
+			var path := DotNpcPath.new()
+			spawners[s].path_toward(npc, path, (queries[i] as DotNpcNavGraph.PathQuery).to)
+			paths[s].append(path)
+
+	_check(
+		(paths[0] as Array).any(func(p: DotNpcPath) -> bool: return not p.is_empty()),
+		"path_workers 0 searches inside path_toward, as before"
+	)
+
+	var threaded := DotParallel.resolve_workers(4) > 0
+	_check(
+		not threaded or (paths[1] as Array).all(func(p: DotNpcPath) -> bool: return p.is_empty()),
+		"path_workers 4 queues the repath instead of searching inline",
+		"skipped: this machine has no worker threads" if not threaded else ""
+	)
+
+	spawners[1].answer_paths()
+	var agree := 0
+
+	for i in 12:
+		var a: DotNpcPath = paths[0][i]
+		var b: DotNpcPath = paths[1][i]
+		if a.points == b.points and a.partial == b.partial:
+			agree += 1
+
+	_check(agree == 12, "and after answer_paths every path equals the inline one", "%d of 12" % agree)
+
+	# Web, or no threads: the same setting resolves to 0 and path_toward searches inline.
+	DotPlatform._kind = DotPlatform.Kind.WEB
+	var web_workers := DotParallel.resolve_workers(4)
+	var web_npc := spawners[1].spawn(&"walker", Vector3(-10, 0, -10))
+	var web_path := DotNpcPath.new()
+	spawners[1].path_toward(web_npc, web_path, Vector3(10, 0, 10))
+	DotPlatform._kind = -1
+	_check(web_workers == 0, "on the web sv_threads_npc resolves to 0 workers")
+	_check(not web_path.is_empty(), "and path_toward finds the path inline there")
+	_check(spawners[1].describe().has("path_workers"), "describe() reports the path workers")
+
+	for s in spawners:
+		s.queue_free()
 	_done()
 
 

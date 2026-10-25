@@ -69,6 +69,9 @@ var use_native_search: bool = true
 ## One [AStar3D] per filter signature (see [method _native_for]), built on first use.
 var _native: Dictionary = {}
 
+## Filter signature -> {of, list}: the per-worker copies of [member _native] (see [method find_paths]).
+var _copies: Dictionary = {}
+
 
 func _init(p_data: DotNpcNavData = null) -> void:
 	if p_data != null:
@@ -211,73 +214,172 @@ func find_path(
 	snap_radius: float = -1.0,
 	allow_partial: bool = false
 ) -> PackedVector3Array:
-	var out := PackedVector3Array()
-	last_partial = false
+	var astar: AStar3D = _native_for(filter) if use_native_search and is_ready() else null
+	var answer := _plan(from, to, snap_radius, allow_partial, astar)
+	last_partial = answer.partial
+	searches += answer.searches
+	failures += answer.failures
+	return answer.points
+
+
+## One search's outcome: what [method find_path] returns and the counters it adds, kept apart
+## so a search on a worker writes nothing shared.
+class PathAnswer:
+	extends RefCounted
+	var points := PackedVector3Array()
+	var partial := false
+	var searches := 0
+	var failures := 0
+
+
+## One repath asked of [method find_paths]. The answer is written into [member points] and
+## [member partial] on the calling thread.
+class PathQuery:
+	extends RefCounted
+	var from := Vector3.ZERO
+	var to := Vector3.ZERO
+	var filter: DotNpcNavFilter = null
+	var snap_radius := -1.0
+	var allow_partial := false
+	## Smoothed as [method find_smooth_path] does, to [member horizon] points.
+	var smooth := false
+	var horizon := 0
+	var points := PackedVector3Array()
+	var partial := false
+
+
+## [method find_path] (or [method find_smooth_path]) for every query, [param workers] at a
+## time on [DotParallel], each worker on its own copy of the native search. The answers equal
+## the one-at-a-time calls whatever the worker count; 0, the script search, or no threads runs
+## them inline in order. Updates [member searches] and [member failures]; [member filter] is restored.
+func find_paths(queries: Array, workers: int) -> void:
+	if queries.is_empty():
+		return
 
 	if not is_ready():
-		return out
+		for q: PathQuery in queries:
+			q.points = PackedVector3Array()
+			q.partial = false
+		return
+
+	data.build_index()
+	var n := DotParallel.resolve_workers(workers) if use_native_search else 0
+	var groups: Array = []
+	var group_of: Dictionary = {}
+
+	for q: PathQuery in queries:
+		var key: Variant = q.filter.get_instance_id() if q.filter != null else 0
+		if not group_of.has(key):
+			group_of[key] = groups.size()
+			groups.append([])
+		(groups[group_of[key]] as Array).append(q)
+
+	var kept := filter
+
+	# Grouped by filter so [member filter] is fixed while tasks read it: snapping, smoothing and
+	# a subclass's [method neighbours] all ask it.
+	for group: Array in groups:
+		filter = (group[0] as PathQuery).filter
+		var engines: Array = _native_copies(filter, maxi(n, 1)) if use_native_search else [null]
+		var chunks := mini(engines.size(), group.size())
+		var size := ceili(float(group.size()) / chunks)
+		var task := func(c: int) -> Array:
+			var out: Array = []
+			for i in range(c * size, mini(group.size(), (c + 1) * size)):
+				var q: PathQuery = group[i]
+				var a := _plan(q.from, q.to, q.snap_radius, q.allow_partial, engines[c])
+				if q.smooth and a.points.size() > 2:
+					a.points = smooth_path(a.points, -1.0, 8, q.horizon)
+				out.append(a)
+			return out
+		var slots := DotParallel.run(task, chunks, &"npc.paths", n)
+
+		for c in chunks:
+			var answers: Array = slots[c]
+			for k in answers.size():
+				var q: PathQuery = group[c * size + k]
+				var a: PathAnswer = answers[k]
+				q.points = a.points
+				q.partial = a.partial
+				searches += a.searches
+				failures += a.failures
+
+	filter = kept
+
+
+## [method find_path]'s search, writing only the answer it returns, so a worker may run it.
+## [param astar] is this filter's native search (one thread at a time), or null for the script A*.
+func _plan(from: Vector3, to: Vector3, snap_radius: float, allow_partial: bool, astar: AStar3D) -> PathAnswer:
+	var answer := PathAnswer.new()
+
+	if not is_ready():
+		return answer
 
 	var start := _nearest_passable(from, snap_radius)
 	var goal := _nearest_passable(to, snap_radius)
 
 	if start < 0 or goal < 0:
-		return out
+		return answer
 
-	searches += 1
+	answer.searches += 1
+	var out := answer.points
 
 	if start == goal:
 		out.append(from)
 		out.append(to)
-		return out
+		answer.points = out
+		return answer
 
 	# A goal in another piece of the graph cannot be reached, and finding that out by search
 	# visits every point the start can reach. Straight to the partial answer instead.
 	if filter == null and not _component.is_empty() and not connected(start, goal):
-		failures += 1
+		answer.failures += 1
 
 		if not allow_partial:
-			return out
+			return answer
 
 		var nearest := _nearest_in_component(start, to)
 
 		if nearest == start:
-			return out
+			return answer
 
-		var partial := find_path(from, data.points[nearest], snap_radius, false)
-		last_partial = true
+		var inner := _plan(from, data.points[nearest], snap_radius, false, astar)
+		answer.searches += inner.searches
+		answer.failures += inner.failures
+		answer.partial = true
+		var partial := inner.points
 
 		if partial.size() > 0:
 			partial.remove_at(partial.size() - 1)
 
-		return partial
+		answer.points = partial
+		return answer
 
-	if use_native_search:
-		return _find_native(from, to, start, goal, allow_partial)
+	if astar != null:
+		_find_native(from, to, start, goal, allow_partial, astar, answer)
+		return answer
 
 	var result := _search(start, goal)
 	var came_from: Dictionary = result["came_from"]
 	var reached := bool(result["reached"])
 
 	if not reached:
-		failures += 1
+		answer.failures += 1
 
-		# Detour returns a partial path to the closest node it managed to reach, and
-		# an NPC is better off walking to the near side of the wall than standing
-		# still: it is what a person does, it puts the NPC where a door might open,
-		# and the director's spawn logic reads positions rather than intentions.
+		# Detour returns a partial path to the closest node it managed to reach: walking to the
+		# near side of the wall beats standing still.
 		if not allow_partial:
-			return out
+			return answer
 
 		goal = int(result["best"])
 
 		if goal == start:
-			return out
+			return answer
 
-		last_partial = true
+		answer.partial = true
 
-	# Walked backwards from the goal and then reversed, which is the only way round:
-	# the search records where each point was reached FROM, so the chain only runs
-	# in that direction.
+	# Walked backwards from the goal and then reversed: the search records where each point
+	# was reached FROM, so the chain only runs in that direction.
 	var chain := PackedInt32Array()
 	var walk := goal
 
@@ -286,62 +388,80 @@ func find_path(
 		var previous: Variant = came_from.get(walk)
 
 		if previous == null:
-			failures += 1
-			return PackedVector3Array()
+			answer.failures += 1
+			answer.points = PackedVector3Array()
+			return answer
 
 		walk = int(previous)
 
 	chain.append(start)
 	chain.reverse()
 
-	# The real start and end are the caller's positions, not the graph points nearest
-	# them. Without this an NPC standing beside a node walks BACK to the node before
-	# setting off, which looks exactly like a bug and is the first thing anybody
-	# watching a path follower notices.
+	# The caller's own ends, not the graph points nearest them, or an NPC walks back to the node
+	# before setting off; and never the goal on a partial path, which would lead through the wall.
 	out.append(from)
 
 	for i in chain:
 		out.append(data.points[i])
 
-	# The caller's own goal, except on a partial path — where appending it would put
-	# the unreachable position on the end of a path that deliberately stops short, and
-	# every follower would walk the last leg straight through the wall.
-	if not last_partial:
+	if not answer.partial:
 		out.append(to)
 
-	return out
+	answer.points = out
+	return answer
 
 
-## [method find_path]'s search and assembly, in [AStar3D]. [param start] and [param goal] are
+## [method _plan]'s search and assembly in [param astar]. [param start] and [param goal] are
 ## already snapped, distinct and in one component (or a filter is set).
-func _find_native(from: Vector3, to: Vector3, start: int, goal: int, allow_partial: bool) -> PackedVector3Array:
+func _find_native(from: Vector3, to: Vector3, start: int, goal: int, allow_partial: bool, astar: AStar3D, answer: PathAnswer) -> void:
 	var out := PackedVector3Array()
-	var astar := _native_for(filter)
 	var chain := astar.get_id_path(start, goal, allow_partial)
 
 	if chain.is_empty() or chain[0] != start:
-		failures += 1
-		return out
+		answer.failures += 1
+		return
 
 	if chain[chain.size() - 1] != goal:
 		# Short of the goal: what the script search calls its best point. As there, a partial
 		# path is only handed out when asked for, and never with the goal on its end.
-		failures += 1
+		answer.failures += 1
 
 		if not allow_partial or chain.size() < 2:
-			return out
+			return
 
-		last_partial = true
+		answer.partial = true
 
 	out.append(from)
 
 	for i in chain:
 		out.append(data.points[i])
 
-	if not last_partial:
+	if not answer.partial:
 		out.append(to)
 
-	return out
+	answer.points = out
+
+
+## [param count] native searches for [param with], each built exactly as [method _native_for]
+## builds it (a subclass's links included), so any of them answers as the cached one does.
+## Rebuilt when the cached one is (a subclass that adds links clears [member _native]).
+func _native_copies(with: DotNpcNavFilter, count: int) -> Array:
+	var original := _native_for(with)
+	var key := _native_key(with)
+	var entry: Dictionary = _copies.get(key, {})
+
+	if int(entry.get("of", 0)) != original.get_instance_id():
+		entry = {"of": original.get_instance_id(), "list": [original]}
+		_copies[key] = entry
+
+	var list: Array = entry["list"]
+
+	while list.size() < count:
+		_native.erase(key)
+		list.append(_native_for(with))
+		_native[key] = original
+
+	return list.slice(0, count)
 
 
 ## The [AStar3D] for [param with]: every point, the weight of arriving at it, and the points
@@ -349,8 +469,7 @@ func _find_native(from: Vector3, to: Vector3, start: int, goal: int, allow_parti
 ## size) rather than per filter object, because a spawner hands the graph a filter per kind and
 ## a game may build a fresh one each search; built once, it is reused for every search after.
 func _native_for(with: DotNpcNavFilter) -> AStar3D:
-	var key := "-" if with == null else "%d|%d|%s|%s" % [with.include_flags, with.exclude_flags, with.avoid_cost, with.area_costs]
-	key += "|%d|%d" % [data.points.size(), data.edges.size()]
+	var key := _native_key(with)
 	var found: Variant = _native.get(key)
 
 	if found != null:
@@ -380,6 +499,11 @@ func _native_for(with: DotNpcNavFilter) -> AStar3D:
 
 	_native[key] = astar
 	return astar
+
+
+func _native_key(with: DotNpcNavFilter) -> String:
+	var key := "-" if with == null else "%d|%d|%s|%s" % [with.include_flags, with.exclude_flags, with.avoid_cost, with.area_costs]
+	return key + "|%d|%d" % [data.points.size(), data.edges.size()]
 
 
 ## The nearest point this searcher is allowed to stand on.

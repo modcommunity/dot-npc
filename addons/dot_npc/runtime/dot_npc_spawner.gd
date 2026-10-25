@@ -181,6 +181,16 @@ var repath_drift: float = 2.5
 ## Seconds between forced repaths even when the goal has not moved.
 var repath_interval: float = 1.5
 
+## Worker threads answering a tick's repaths together ([method DotNpcNavGraph.find_paths]).
+## 0 searches inline as each brain asks. Above 0 (-1 automatic) a repath is queued and answered
+## after every brain has thought, so that one think follows the old path (or heads straight at the
+## goal). A host copies dot-server's [code]sv_threads_npc[/code] here; without threads it is inline.
+var path_workers: int = 0
+
+## [DotNpcPath, DotNpcNavGraph.PathQuery, goal] per queued repath, in the order asked.
+var _path_queue: Array = []
+var _path_pending: Dictionary = {}
+
 ## Instance id -> DotNpcInstance.
 var _npcs: Dictionary = {}
 
@@ -246,6 +256,9 @@ func _ready() -> void:
 ## across a change is a graph of a level nobody is standing in — an NPC pathing over it
 ## walks through walls, which is far worse than one with no navigation at all.
 func set_nav_data(data: DotNpcNavData) -> DotResult:
+	_path_queue.clear()
+	_path_pending.clear()
+
 	if data == null:
 		nav = null
 		return DotResult.success(null)
@@ -289,7 +302,11 @@ func path_toward(npc: DotNpcInstance, path: DotNpcPath, goal: Vector3) -> Vector
 	if not has_nav() or npc == null or not npc.is_alive() or path == null:
 		return goal
 
-	if path.needs_repath(_now, goal, repath_interval, repath_drift):
+	var due := path.needs_repath(_now, goal, repath_interval, repath_drift)
+
+	if due and DotParallel.resolve_workers(path_workers) > 0:
+		_queue_path(npc, path, goal)
+	elif due:
 		# The filter is set per search rather than held on the graph, because one
 		# graph serves every NPC on the map and they do not agree about it: the thing
 		# that cannot crouch and the thing that can are asking different questions of
@@ -312,6 +329,51 @@ func path_toward(npc: DotNpcInstance, path: DotNpcPath, goal: Vector3) -> Vector
 		return goal
 
 	return path.advance(npc.position(), goal)
+
+
+func _queue_path(npc: DotNpcInstance, path: DotNpcPath, goal: Vector3) -> void:
+	var key := path.get_instance_id()
+
+	if _path_pending.has(key):
+		return
+
+	_path_pending[key] = true
+	var q := DotNpcNavGraph.PathQuery.new()
+	q.from = npc.position()
+	q.to = goal
+	q.filter = _filter_for(npc.def)
+	q.snap_radius = limits.spawn_snap_radius
+	q.allow_partial = allow_partial_paths
+	q.smooth = smooth_paths and not path.is_rough(_now)
+	q.horizon = smooth_horizon
+	_path_queue.append([path, q, goal])
+
+
+## Answers every repath queued this tick, on [member path_workers]; [method tick] calls it after
+## the brains think. The paths get exactly what an inline search would have given them.
+func answer_paths() -> void:
+	if _path_queue.is_empty():
+		return
+
+	var queue := _path_queue
+	_path_queue = []
+	_path_pending.clear()
+
+	if not has_nav():
+		return
+
+	var queries: Array = []
+
+	for entry: Array in queue:
+		queries.append(entry[1])
+
+	nav.find_paths(queries, path_workers)
+
+	for entry: Array in queue:
+		var path: DotNpcPath = entry[0]
+		var q: DotNpcNavGraph.PathQuery = entry[1]
+		path.set_points(q.points, _now, entry[2])
+		path.partial = q.partial
 
 
 ## The navigation filter for one kind of NPC, built once and kept.
@@ -472,6 +534,8 @@ func _think(delta: float) -> void:
 			continue
 
 		(npc.brain as DotNpcBrain).think(delta)
+
+	answer_paths()
 
 
 func _reclaim() -> void:
@@ -1232,6 +1296,7 @@ func describe() -> Dictionary:
 		"seed_base": seed_base,
 		"seeded_by": "game" if seed_source.is_valid() else "spawn count",
 		"nav": nav.describe() if has_nav() else "none",
+		"path_workers": DotParallel.resolve_workers(path_workers),
 		"limits": limits.describe_summary() if limits != null else "none",
 	}
 

@@ -336,6 +336,12 @@ func points_within(p: Vector3, radius: float) -> PackedInt32Array:
 	return out
 
 
+## Builds the bucket index now if the points changed: queries from worker threads must find
+## it built, because building it is a write.
+func build_index() -> void:
+	_ensure_index()
+
+
 ## Drops the bucket index, so the next query rebuilds it. For anything that edited
 ## [member points] in place: [method add_point] and [method validate] already do.
 func invalidate_index() -> void:

@@ -82,6 +82,7 @@ Profiles: `DotNpcProfiles` (the `npc` kind) offers `profile_schemas()`, so dot-c
 | What one area of the map costs to cross | `DotNpcNavFilter.set_area_cost`, per NPC |
 | What one kind of NPC cannot traverse | `DotNpcDef.nav_exclude_flags` |
 | Whether paths are smoothed or may stop short | `DotNpcSpawner.smooth_paths` / `allow_partial_paths` |
+| Whether repaths run on worker threads | `DotNpcSpawner.path_workers`, from dot-server's `npc_workers()` (`sv_threads_npc`); 0 is inline. [navigation](docs/navigation.md#at-scale) |
 | Where cover is | `DotNpcNavBuilder.generate_cover` / `cover_range`, or `DotNpcNavData.add_cover` from a generator that has the geometry |
 | Where NPCs are added | `DotNpcSpawner.world_ref`, a `DotNodeRef` |
 | What replicates | `DotNpcNetSync.specs()`, resolved by the game's bridge |
