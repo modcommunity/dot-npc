@@ -7,7 +7,8 @@ extends RefCounted
 ## The limb is cut out of the model by vertex weight, not by scaling bones on a second copy: scaled-away bones
 ## leave stretched slivers across the cut. The skinned body hides the limb by collapsing its root bone.
 
-const MAX_GIBS := 24
+## The default cap; the live one is [member DotNpcGore.max_gibs].
+const MAX_GIBS := DotNpcGore.DEFAULT_MAX_GIBS
 const GROUP := &"dot_npc_gibs"
 
 static var _mesh_cache: Dictionary = {}
@@ -215,7 +216,7 @@ static func bone_material() -> StandardMaterial3D:
 
 static func blood(burst: bool, dir: Vector3) -> CPUParticles3D:
 	var p := CPUParticles3D.new()
-	p.amount = 28 if burst else 8
+	p.amount = int((28 if burst else 8) * DotNpcGore.spray_scale())
 	p.lifetime = 0.9 if burst else 0.8
 	p.one_shot = burst
 	p.explosiveness = 0.95 if burst else 0.0
@@ -242,18 +243,32 @@ static func spawn_gib(sk: Skeleton3D, model: Node, key: String, root: int, limb:
 		return null
 	var mesh := limb_mesh(sk, model, root, key)
 	var world := world_of(sk)
+	if not DotNpcGore.gibs_enabled():
+		return null
+	# At the cap the oldest gib is reused, not freed and rebuilt: a crowd of kills costs no allocation churn.
 	var live := world.get_tree().get_nodes_in_group(GROUP)
-	while live.size() >= MAX_GIBS:
-		live[0].queue_free()
+	var gib: RigidBody3D = null
+	while live.size() >= DotNpcGore.max_gibs:
+		var oldest := live[0] as RigidBody3D
 		live.remove_at(0)
-
-	var gib := RigidBody3D.new()
+		if gib == null and oldest != null:
+			gib = oldest
+			for c in gib.get_children():
+				gib.remove_child(c)
+				c.queue_free()
+		else:
+			live_free(oldest)
+	if gib == null:
+		gib = RigidBody3D.new()
+		gib.add_to_group(GROUP)
+		gib.collision_layer = 0
+		gib.collision_mask = 1
+		world.add_child(gib)
+	else:
+		world.move_child(gib, -1)
 	gib.name = "Gib_%s" % limb
-	gib.add_to_group(GROUP)
-	gib.collision_layer = 0
-	gib.collision_mask = 1
+	gib.sleeping = false
 	gib.mass = float(d.get("gib_mass", 20.0))
-	world.add_child(gib)
 	gib.global_transform = Transform3D(sk.global_transform.basis.orthonormalized(), joint_world)
 	if mesh != null:
 		var mi := MeshInstance3D.new()
@@ -273,10 +288,15 @@ static func spawn_gib(sk: Skeleton3D, model: Node, key: String, root: int, limb:
 	gib.linear_velocity = impulse + Vector3(randf_range(-1.0, 1.0), 2.5, randf_range(-1.0, 1.0))
 	gib.angular_velocity = Vector3(randf_range(-4.0, 4.0), randf_range(-4.0, 4.0), randf_range(-4.0, 4.0))
 	var spray := blood(true, impulse)
-	gib.add_child(spray)
-	spray.emitting = true
+	if DotNpcGore.spray_enabled():
+		gib.add_child(spray)
+		spray.emitting = true
+	else:
+		spray.free()
 	var life := float(d.get("gib_seconds", 14.0))
-	gib.get_tree().create_timer(life).timeout.connect(_free_weak.bind(weakref(gib)))
+	var until := Time.get_ticks_msec() + int(life * 1000.0)
+	gib.set_meta(&"dot_npc_gib_until", until)
+	gib.get_tree().create_timer(life).timeout.connect(_free_weak.bind(weakref(gib), until))
 	return gib
 
 
@@ -360,8 +380,13 @@ static func sever(sk: Skeleton3D, model: Node, key: String, limb: StringName, d:
 	if not silent:
 		spawn_gib(sk, model, key, root, limb, d, joint, impulse)
 	collapse_bone(sk, model, root)
-	add_stump(sk, root, d, not silent)
+	add_stump(sk, root, d, not silent and DotNpcGore.spray_enabled())
 	return joint
+
+
+static func live_free(n: Node) -> void:
+	if n != null:
+		n.queue_free()
 
 
 ## Undoes every [method sever] on [param sk]: bones back to full scale, the drawn meshes whole, stumps gone.
@@ -384,9 +409,10 @@ static func restore(sk: Skeleton3D, model: Node = null) -> void:
 
 
 ## Timer callbacks hold a WeakRef: a lambda capturing the node itself logs "Lambda capture was freed" when the node is gone first.
-static func _free_weak(ref: WeakRef) -> void:
+static func _free_weak(ref: WeakRef, until := -1) -> void:
 	var n := ref.get_ref() as Node
-	if n != null:
+	# A recycled gib carries a later expiry; the timer of its first life must not cut the second short.
+	if n != null and (until < 0 or int(n.get_meta(&"dot_npc_gib_until", until)) == until):
 		n.queue_free()
 
 

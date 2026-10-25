@@ -19,13 +19,13 @@ const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 const CHOOSER := "res://fixtures/chooser_brain.gd"
 
-const CHECKS := 238 + 23 + 15 + 6 + 3 + 4
+const CHECKS := 238 + 23 + 15 + 6 + 3 + 4 + 9
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
 ## bailed out early after a failed guard is counted as not finished on purpose. The CHECKS
 ## total is the other half — see docs/testing.md.
-const SECTIONS := 34
+const SECTIONS := 35
 
 var _passed := 0
 var _failed := 0
@@ -86,6 +86,7 @@ func _run() -> void:
 	await _test_no_leaked_nodes()
 	_test_net_sync()
 	_test_limbs()
+	_test_gore()
 
 	print("")
 	print("%d passed, %d failed" % [_passed, _failed])
@@ -2241,6 +2242,42 @@ func _test_limbs() -> void:
 	late.setup(&"dummy", defs, stub)
 	_check(late.mask() == 0 and not late.is_severed(&"head") and stub.restores == 1, "setup resets the severed set and restores the view")
 	body.queue_free()
+	_done()
+
+
+func _test_gore() -> void:
+	_section("gore level")
+	DotNpcGore.reset()
+	_check(DotNpcGore.level == 2 and DotNpcGore.gibs_enabled() and DotNpcGore.spray_enabled(), "the default is gibs and spray (level 2)")
+	DotNpcGore.level = 9
+	_check(DotNpcGore.level == DotNpcGore.MAX_LEVEL and is_equal_approx(DotNpcGore.health_scale(), 0.6), "a level clamps to 3, where limbs give way sooner")
+	DotNpcGore.level = -4
+	_check(DotNpcGore.level == 0 and not DotNpcGore.dismember_enabled(), "a level clamps to 0, where nothing comes off")
+	DotNpcGore.level = 1
+	_check(DotNpcGore.dismember_enabled() and not DotNpcGore.gibs_enabled() and not DotNpcGore.spray_enabled(), "level 1 is stumps only")
+	DotNpcGore.level = 2
+	DotNpcGore.max_gibs = 0
+	_check(not DotNpcGore.gibs_enabled() and DotNpcGore.spray_enabled(), "a gib cap of 0 throws no limb but keeps the spray")
+	DotNpcGore.reset()
+	var defs := {"armL": {"bones": ["armL"], "radius": 0.2, "health": 80.0}}
+	var make := func() -> DotNpcLimbs:
+		var l := DotNpcLimbs.new()
+		_world.add_child(l)
+		l.setup(&"gore", defs)
+		return l
+	var off: DotNpcLimbs = make.call()
+	DotNpcGore.level = 0
+	_check(off.hit_limb(&"armL", Vector3.ZERO, 500.0) == &"" and off.mask() == 0, "level 0: a shot of any size takes no limb")
+	off.apply_mask(1)
+	_check(off.mask() == 0, "level 0: a replicated mask shows nothing")
+	DotNpcGore.level = 2
+	_check(off.hit_limb(&"armL", Vector3.ZERO, 79.0) == &"", "level 2: 79 of 80 holds")
+	var soft: DotNpcLimbs = make.call()
+	DotNpcGore.level = 3
+	_check(soft.hit_limb(&"armL", Vector3.ZERO, 50.0) == &"armL", "level 3: 50 takes a limb of 80 (x0.6)")
+	DotNpcGore.reset()
+	off.queue_free()
+	soft.queue_free()
 	_done()
 
 

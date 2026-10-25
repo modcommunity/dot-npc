@@ -79,6 +79,8 @@ func mask() -> int:
 ## Client: brings the severed set to [param m]. Only ever severs (a limb never grows back). The limbs were
 ## lost before this machine saw them, so each shows a stump with no gib and no blood.
 func apply_mask(m: int) -> void:
+	if not DotNpcGore.dismember_enabled():
+		return
 	var i := 0
 	for k in defs.keys():
 		if m & (1 << i) and not _gone.has(k):
@@ -110,9 +112,10 @@ func hit(world_point: Vector3, damage: float, impulse: Vector3 = Vector3.ZERO) -
 ## Hurts the named limb: for a caller whose hitbox already says which limb it was (overlapping regions can
 ## make [method limb_at] name another). Same return as [method hit].
 func hit_limb(k: StringName, world_point: Vector3, damage: float, impulse: Vector3 = Vector3.ZERO) -> StringName:
-	if k == &"" or not defs.has(k) or _gone.has(k) or damage <= 0.0:
+	if k == &"" or not defs.has(k) or _gone.has(k) or damage <= 0.0 or not DotNpcGore.dismember_enabled():
 		return &""
-	_health[k] = float(_health[k]) - damage * float((defs[k] as Dictionary).get("damage_scale", 1.0))
+	var scale := float((defs[k] as Dictionary).get("damage_scale", 1.0)) / DotNpcGore.health_scale()
+	_health[k] = float(_health[k]) - damage * scale
 	if float(_health[k]) > 0.0:
 		return &""
 	sever(k, world_point, impulse)

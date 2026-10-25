@@ -27,6 +27,7 @@ Profiles: `DotNpcProfiles` (the `npc` kind) offers `profile_schemas()`, so dot-c
 | `addons/dot_npc/nav/` | `DotNpcNavData` (points, areas, flags, cover, digest), `DotNpcNavBuilder`, `DotNpcNavFilter`, `DotNpcNavGraph` (A*, smoothing, partial paths), `DotNpcPath` |
 | `addons/dot_npc/view/` | `DotNpcGibs`: cuts a severed limb out of a skinned mesh, stump and blood (drawn only) |
 | `addons/dot_npc/runtime/dot_npc_limbs.gd` | `DotNpcLimbs`: shootable limbs on a body (regions from bones, health, `mask()` for `DotNpcNetSync.limb_specs()`, `speed_scale()`); tuned by `limbs:` in `cfg/addons/dot-npc/*.yml` |
+| `addons/dot_npc/core/dot_npc_gore.gd` | `DotNpcGore`: the process-wide gore dial (`level` 0 off, 1 stumps, 2 gibs and spray, 3 softer limbs and heavier spray; `max_gibs`). A game maps its cvars `gore_level` / `gore_max_gibs` onto it; level 0 makes every limb call a no-op |
 | `addons/dot_npc/net/` | `DotNpcNetSync`: what replicates, as strings; never names dot-net |
 | `fixtures/` | bodies (3D and 2D) and brains for the suite, written the pack-safe way |
 | `examples/npc_selftest.tscn` | the suite |
