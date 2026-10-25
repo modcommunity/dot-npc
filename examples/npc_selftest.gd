@@ -19,7 +19,7 @@ const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 const CHOOSER := "res://fixtures/chooser_brain.gd"
 
-const CHECKS := 238 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 9
+const CHECKS := 238 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
@@ -2369,8 +2369,22 @@ func _test_gore() -> void:
 	DotNpcGore.level = 3
 	_check(soft.hit_limb(&"armL", Vector3.ZERO, 50.0) == &"armL", "level 3: 50 takes a limb of 80 (x0.6)")
 	DotNpcGore.reset()
+	DotNpcGore.view_cap = DotNpcGore.STUMPS
+	_check(DotNpcGore.drawn_level() == 1 and not DotNpcGore.gibs_enabled() and not DotNpcGore.spray_enabled() and not DotNpcGore.wounds_enabled(),
+		"a player's cap of 1 draws clean stumps only, whatever the rule")
+	var capped: DotNpcLimbs = make.call()
+	_check(capped.hit_limb(&"armL", Vector3.ZERO, 500.0) == &"armL", "and the cap never changes what the rules let come off")
+	DotNpcGore.level = 0
+	DotNpcGore.view_cap = 3
+	_check(DotNpcGore.drawn_level() == 0, "a rule of 0 caps what a player can ask to see")
+	DotNpcGore.reset()
+	DotNpcGore.max_wounds = 0
+	_check(not DotNpcGore.wounds_enabled() and DotNpcGibs.add_wound(null, Vector3.ZERO) == null and DotNpcGibs.add_pool(null, Vector3.ZERO) == null,
+		"a wound cap of 0 draws no marks or pools")
+	DotNpcGore.reset()
 	off.queue_free()
 	soft.queue_free()
+	capped.queue_free()
 	_done()
 
 

@@ -15,6 +15,14 @@ static var _mesh_cache: Dictionary = {}
 const PRISTINE := &"dot_npc_pristine_mesh"
 const COLLAPSED := &"dot_npc_collapsed_bones"
 const STUMP_PREFIX := "Stump_"
+const WOUND_PREFIX := "Wound_"
+const WOUND_GROUP := &"dot_npc_wounds"
+const POOL_SECONDS := 25.0
+
+static var _blob_mat: StandardMaterial3D = null
+static var _blob_mesh: SphereMesh = null
+static var _pool_mat: StandardMaterial3D = null
+static var _pool_mesh: CylinderMesh = null
 
 
 static func drawn() -> bool:
@@ -216,7 +224,7 @@ static func bone_material() -> StandardMaterial3D:
 
 static func blood(burst: bool, dir: Vector3) -> CPUParticles3D:
 	var p := CPUParticles3D.new()
-	p.amount = int((28 if burst else 8) * DotNpcGore.spray_scale())
+	p.amount = int((40 if burst else 10) * DotNpcGore.spray_scale())
 	p.lifetime = 0.9 if burst else 0.8
 	p.one_shot = burst
 	p.explosiveness = 0.95 if burst else 0.0
@@ -227,8 +235,8 @@ static func blood(burst: bool, dir: Vector3) -> CPUParticles3D:
 	p.initial_velocity_max = 6.0 if burst else 1.0
 	p.gravity = Vector3(0.0, -9.8, 0.0)
 	var drop := SphereMesh.new()
-	drop.radius = 0.018
-	drop.height = 0.036
+	drop.radius = 0.024
+	drop.height = 0.048
 	drop.radial_segments = 6
 	drop.rings = 3
 	drop.material = flesh_material()
@@ -283,7 +291,7 @@ static func spawn_gib(sk: Skeleton3D, model: Node, key: String, root: int, limb:
 		gib.add_child(cs)
 	var par := sk.get_bone_parent(root)
 	var out := sk.get_bone_global_rest(root).origin - sk.get_bone_global_rest(par).origin if par >= 0 else Vector3.UP
-	var cap := cut_face(float(d.get("radius", 0.3)) * 0.42, -out.normalized() if out.length() > 0.001 else Vector3.DOWN)
+	var cap := cut_face(stump_radius(d), -out.normalized() if out.length() > 0.001 else Vector3.DOWN)
 	gib.add_child(cap)
 	gib.linear_velocity = impulse + Vector3(randf_range(-1.0, 1.0), 2.5, randf_range(-1.0, 1.0))
 	gib.angular_velocity = Vector3(randf_range(-4.0, 4.0), randf_range(-4.0, 4.0), randf_range(-4.0, 4.0))
@@ -313,10 +321,10 @@ static func add_stump(sk: Skeleton3D, root: int, d: Dictionary, drip_blood := tr
 	sk.add_child(att)
 	att.bone_idx = parent
 	var at := sk.get_bone_global_rest(parent).affine_inverse() * sk.get_bone_global_rest(root).origin
-	var r := float(d.get("radius", 0.3)) * 0.42
+	var r := stump_radius(d)
 	var dir := at.normalized() if at.length() > 0.001 else Vector3.UP
 	var cut := cut_face(r, dir)
-	cut.position = at + dir * r * 0.3
+	cut.position = at + dir * r * 0.45
 	att.add_child(cut)
 	if not drip_blood:
 		return att
@@ -324,8 +332,13 @@ static func add_stump(sk: Skeleton3D, root: int, d: Dictionary, drip_blood := tr
 	drip.position = at
 	att.add_child(drip)
 	drip.emitting = true
-	sk.get_tree().create_timer(4.0).timeout.connect(_stop_weak.bind(weakref(drip)))
+	(Engine.get_main_loop() as SceneTree).create_timer(4.0).timeout.connect(_stop_weak.bind(weakref(drip)))
 	return att
+
+
+## Radius of a cut face for a limb whose region is [param d]: wide enough to read as a wound from across a room.
+static func stump_radius(d: Dictionary) -> float:
+	return clampf(float(d.get("radius", 0.3)) * 0.55, 0.07, 0.2)
 
 
 ## The flat cut itself at the origin, facing [param dir]: flesh collar behind it, a ring of muscle, a bone disc
@@ -333,7 +346,7 @@ static func add_stump(sk: Skeleton3D, root: int, d: Dictionary, drip_blood := tr
 static func cut_face(r: float, dir: Vector3) -> Node3D:
 	var cut := Node3D.new()
 	cut.transform = Transform3D(Basis(Quaternion(Vector3.UP, dir)), Vector3.ZERO)
-	cut.add_child(_disc(r, r * 1.1, -r * 0.55, flesh_material()))
+	cut.add_child(_disc(r, r * 1.6, -r * 0.8, flesh_material()))
 	cut.add_child(_disc(r * 0.88, r * 0.04, r * 0.02, muscle_material()))
 	cut.add_child(_disc(r * 0.34, r * 0.06, r * 0.05, bone_material()))
 	cut.add_child(_disc(r * 0.14, r * 0.07, r * 0.055, marrow_material()))
@@ -396,7 +409,7 @@ static func restore(sk: Skeleton3D, model: Node = null) -> void:
 		sk.set_bone_pose_scale(int(b), Vector3.ONE)
 	sk.remove_meta(COLLAPSED)
 	for c in sk.get_children():
-		if c is BoneAttachment3D and String(c.name).begins_with(STUMP_PREFIX):
+		if c is BoneAttachment3D and (String(c.name).begins_with(STUMP_PREFIX) or String(c.name).begins_with(WOUND_PREFIX)):
 			sk.remove_child(c)
 			c.queue_free()
 	var scope: Node = model if model != null else (sk.owner if sk.owner != null else sk.get_parent())
@@ -420,3 +433,87 @@ static func _stop_weak(ref: WeakRef) -> void:
 	var p := ref.get_ref() as CPUParticles3D
 	if p != null:
 		p.emitting = false
+
+
+## Frees the oldest wound marks and pools until there is room for one more under [member DotNpcGore.max_wounds].
+static func _make_room(tree: SceneTree) -> void:
+	var live := tree.get_nodes_in_group(WOUND_GROUP)
+	while live.size() >= DotNpcGore.max_wounds and not live.is_empty():
+		var oldest := live[0] as Node
+		live.remove_at(0)
+		oldest.get_parent().remove_child(oldest)
+		oldest.queue_free()
+
+
+## A wet mark on the body where it was hit, riding the nearest bone. Pooled and capped; null headless, with gore
+## off, or when no bone is near. [param world_point] is on or near the surface.
+static func add_wound(sk: Skeleton3D, world_point: Vector3, size := 0.09) -> Node3D:
+	if not drawn() or not DotNpcGore.wounds_enabled() or sk == null or not sk.is_inside_tree():
+		return null
+	var local := sk.global_transform.affine_inverse() * world_point
+	var best := -1
+	var best_d := INF
+	var gone: Array = sk.get_meta(COLLAPSED, [])
+	for i in sk.get_bone_count():
+		if gone.has(i):
+			continue
+		var gap := sk.get_bone_global_pose(i).origin.distance_squared_to(local)
+		if gap < best_d:
+			best_d = gap
+			best = i
+	if best < 0:
+		return null
+	_make_room(sk.get_tree())
+	if _blob_mat == null:
+		_blob_mat = StandardMaterial3D.new()
+		_blob_mat.albedo_color = Color(0.32, 0.01, 0.03)
+		_blob_mat.roughness = 0.15
+		_blob_mesh = SphereMesh.new()
+		_blob_mesh.radius = 1.0
+		_blob_mesh.height = 2.0
+		_blob_mesh.radial_segments = 8
+		_blob_mesh.rings = 4
+		_blob_mesh.material = _blob_mat
+	var att := BoneAttachment3D.new()
+	att.name = "%s%d" % [WOUND_PREFIX, best]
+	att.add_to_group(WOUND_GROUP)
+	sk.add_child(att)
+	att.bone_idx = best
+	var mark := MeshInstance3D.new()
+	mark.mesh = _blob_mesh
+	var bone_local := sk.get_bone_global_pose(best).affine_inverse() * local
+	var out := bone_local.normalized() if bone_local.length() > 0.001 else Vector3.UP
+	var up := Vector3.UP if absf(out.dot(Vector3.UP)) < 0.95 else Vector3.RIGHT
+	var basis := Basis.looking_at(out, up) * Basis.from_scale(Vector3(size, size * 0.8, size * 0.22))
+	mark.transform = Transform3D(basis, bone_local)
+	att.add_child(mark)
+	return att
+
+
+## A pool of blood on the floor at [param at] (a crawling body's trail): flat, shared mesh and material, capped
+## with the wound marks and gone after [constant POOL_SECONDS]. Null headless or with gore off.
+static func add_pool(tree: SceneTree, at: Vector3, radius := 0.22) -> Node3D:
+	if not drawn() or not DotNpcGore.wounds_enabled() or tree == null:
+		return null
+	_make_room(tree)
+	if _pool_mat == null:
+		_pool_mat = StandardMaterial3D.new()
+		_pool_mat.albedo_color = Color(0.28, 0.0, 0.02)
+		_pool_mat.roughness = 0.1
+		_pool_mesh = CylinderMesh.new()
+		_pool_mesh.top_radius = 1.0
+		_pool_mesh.bottom_radius = 1.0
+		_pool_mesh.height = 0.004
+		_pool_mesh.radial_segments = 10
+		_pool_mesh.rings = 1
+		_pool_mesh.material = _pool_mat
+	var pool := MeshInstance3D.new()
+	pool.mesh = _pool_mesh
+	pool.add_to_group(WOUND_GROUP)
+	pool.scale = Vector3(radius, 1.0, radius * 0.8)
+	pool.rotation.y = randf() * TAU
+	pool.position = at + Vector3(0.0, 0.012, 0.0)
+	pool.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	(tree.current_scene if tree.current_scene != null else tree.root).add_child(pool)
+	tree.create_timer(POOL_SECONDS).timeout.connect(_free_weak.bind(weakref(pool)))
+	return pool
