@@ -61,6 +61,14 @@ var clearance: float = 0.6
 ## not write them down nothing can ever answer "where can I hide from that".
 var generate_cover: bool = true
 
+## How far, in spacings, two points may be and still join. 1.5 takes the grid's diagonal; 1.6 also
+## joins the columns of two abutting floor rectangles whose grids sit half a step apart (1.58).
+var neighbour_reach: float = 1.5
+
+## How far below a point's height an obstacle's top may be and still block it, in metres; below
+## that it is under the feet (a stair tread beside the flight's top step). Negative: the clearance.
+var obstacle_under_feet: float = -1.0
+
 ## How close a point must be to an obstacle to count as cover, in metres.
 ##
 ## One and a half body widths past the clearance. Closer and only points already
@@ -394,7 +402,7 @@ func _step_points() -> void:
 ## other point. A bucket is `reach` wide, so every possible neighbour is in the three-by-three block
 ## round a point's own.
 func _step_buckets() -> void:
-	var reach := spacing * 1.5
+	var reach := spacing * neighbour_reach
 
 	while _cursor < _positions.size():
 		var key := Vector2i(floori(_positions[_cursor].x / reach), floori(_positions[_cursor].z / reach))
@@ -461,7 +469,7 @@ func _step_edges() -> void:
 ## The edges (pairs of indexes, lower first) from the points [param from] up to [param to], in the
 ## order the all-pairs loop gave them.
 func _edges_between(from: int, to: int) -> PackedInt32Array:
-	var reach := spacing * 1.5
+	var reach := spacing * neighbour_reach
 	var reach_sq := reach * reach
 	var out := PackedInt32Array()
 
@@ -751,6 +759,10 @@ func _already_placed(p: Vector3, seen: Dictionary, positions: Array[Vector3], wi
 	return false
 
 
+func _under_feet() -> float:
+	return clearance if obstacle_under_feet < 0.0 else obstacle_under_feet
+
+
 func _blocked(p: Vector3) -> bool:
 	if _obstacle_cells.is_empty() and not _obstacles.is_empty():
 		_index_obstacles()
@@ -763,7 +775,9 @@ func _blocked(p: Vector3) -> bool:
 		return false
 
 	for index: int in (bucket as PackedInt32Array):
-		if _obstacles[index].grow(clearance).has_point(p):
+		var box: AABB = _obstacles[index]
+
+		if box.end.y >= p.y - _under_feet() and box.grow(clearance).has_point(p):
 			return true
 
 	return false
