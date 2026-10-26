@@ -19,7 +19,7 @@ const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 const CHOOSER := "res://fixtures/chooser_brain.gd"
 
-const CHECKS := 238 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11
+const CHECKS := 239 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
@@ -829,6 +829,19 @@ func _test_nav_smoothing() -> void:
 	_check(
 		not bent_graph.can_walk_straight(Vector3(-8, 0, 0), Vector3(8, 0, 0)),
 		"and one through the wall is not"
+	)
+
+	# The leg memo answers what the tests would: the same path asked twice, and without it.
+	var memo_raw := bent_graph.find_path(Vector3(-8, 0, 0), Vector3(8, 0, 0), 3.0)
+	var memo_first := bent_graph.smooth_path(memo_raw)
+	var memo_again := bent_graph.smooth_path(memo_raw)
+	bent_graph.memo_legs = false
+	var memo_off := bent_graph.smooth_path(memo_raw)
+	bent_graph.memo_legs = true
+	_check(
+		memo_first == memo_again and memo_first == memo_off and not _path_enters(memo_again, wall),
+		"a remembered leg smooths a path as testing it again would",
+		"%d, %d, %d points" % [memo_first.size(), memo_again.size(), memo_off.size()]
 	)
 
 	var two := PackedVector3Array([from, to])

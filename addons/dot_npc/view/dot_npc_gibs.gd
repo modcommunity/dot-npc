@@ -12,6 +12,9 @@ const MAX_GIBS := DotNpcGore.DEFAULT_MAX_GIBS
 const GROUP := &"dot_npc_gibs"
 
 static var _mesh_cache: Dictionary = {}
+## A whole mesh's id and the bone collapsed -> the mesh that cut leaves, or null when it drops nothing.
+static var _collapse_cache: Dictionary = {}
+const COLLAPSE_CACHE_MAX := 256
 const PRISTINE := &"dot_npc_pristine_mesh"
 const COLLAPSED := &"dot_npc_collapsed_bones"
 const STUMP_PREFIX := "Stump_"
@@ -82,17 +85,29 @@ static func _longest_edge(p: PackedVector3Array, a: int, b: int, c: int) -> floa
 ## of the mesh, so the shared resource stays whole.
 static func collapse_bone(sk: Skeleton3D, model: Node, root: int, grow := 2.0) -> void:
 	var meshes: Array = []
+	var reused: Array = []
 	for m in model.find_children("*", "MeshInstance3D", true, false):
 		var mi := m as MeshInstance3D
 		if mi.mesh is ArrayMesh and mi.skin != null:
+			# A whole body of a kind cuts the same way: the first cut's mesh serves the rest, so a
+			# sever stops being two script skinning passes over every vertex (about 8 ms each).
+			var key := "" if mi.has_meta(PRISTINE) else "%d|%d" % [mi.mesh.get_instance_id(), root]
+			if key != "" and _collapse_cache.has(key):
+				reused.append([mi, _collapse_cache[key]])
+				continue
 			var before := []
 			for s in mi.mesh.get_surface_count():
 				before.append(skinned(sk, mi, mi.mesh.surface_get_arrays(s)))
-			meshes.append([mi, before])
+			meshes.append([mi, before, key])
 	sk.set_bone_pose_scale(root, Vector3.ONE * 0.001)
 	var gone: Array = sk.get_meta(COLLAPSED, [])
 	gone.append(root)
 	sk.set_meta(COLLAPSED, gone)
+	for entry in reused:
+		var mi: MeshInstance3D = entry[0]
+		mi.set_meta(PRISTINE, mi.mesh)
+		if entry[1] != null:
+			mi.mesh = entry[1]
 	for entry in meshes:
 		var mi: MeshInstance3D = entry[0]
 		if not mi.has_meta(PRISTINE):
@@ -122,6 +137,10 @@ static func collapse_bone(sk: Skeleton3D, model: Node, root: int, grow := 2.0) -
 			dst.surface_set_material(s, mat)
 		if changed:
 			mi.mesh = dst
+		if entry[2] != "":
+			if _collapse_cache.size() >= COLLAPSE_CACHE_MAX:
+				_collapse_cache.clear()
+			_collapse_cache[entry[2]] = dst if changed else null
 
 
 ## The limb's triangles in skeleton space, centred on its joint, or null when it has none.

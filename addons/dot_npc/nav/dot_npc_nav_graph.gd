@@ -283,13 +283,15 @@ func find_paths(queries: Array, workers: int) -> void:
 		var engines: Array = _native_copies(filter, maxi(n, 1)) if use_native_search else [null]
 		var chunks := mini(engines.size(), group.size())
 		var size := ceili(float(group.size()) / chunks)
+		# The leg memo is one dictionary, so only an inline run may write it.
+		var legs: Variant = _leg_memo(-1.0) if n <= 0 else null
 		var task := func(c: int) -> Array:
 			var out: Array = []
 			for i in range(c * size, mini(group.size(), (c + 1) * size)):
 				var q: PathQuery = group[i]
 				var a := _plan(q.from, q.to, q.snap_radius, q.allow_partial, engines[c])
 				if q.smooth and a.points.size() > 2:
-					a.points = smooth_path(a.points, -1.0, 8, q.horizon)
+					a.points = _smooth(a.points, -1.0, 8, q.horizon, legs)
 				out.append(a)
 			return out
 		var slots := DotParallel.run(task, chunks, &"npc.paths", n)
@@ -700,6 +702,10 @@ func _are_neighbours(a: int, b: int) -> bool:
 func smooth_path(
 	path: PackedVector3Array, corridor: float = -1.0, lookahead: int = 8, horizon: int = 0
 ) -> PackedVector3Array:
+	return _smooth(path, corridor, lookahead, horizon, _leg_memo(corridor) if path.size() > 2 else null)
+
+
+func _smooth(path: PackedVector3Array, corridor: float, lookahead: int, horizon: int, legs: Variant) -> PackedVector3Array:
 	if path.size() <= 2:
 		return path
 
@@ -714,7 +720,7 @@ func smooth_path(
 		var limit := mini(anchor + maxi(lookahead, 1), path.size() - 1)
 
 		for candidate in range(limit, anchor + 1, -1):
-			if can_walk_straight(path[anchor], path[candidate], corridor):
+			if _leg_walkable(legs, path[anchor], path[candidate], corridor):
 				furthest = candidate
 				break
 
@@ -725,6 +731,51 @@ func smooth_path(
 		out.append(path[rest])
 
 	return out
+
+
+## Whether [method smooth_path] remembers each leg's [method can_walk_straight] answer. A crowd
+## chasing one target smooths the same legs over and over; a subclass whose answer changes without
+## the graph or the filter changing must turn this off.
+var memo_legs: bool = true
+
+## Legs remembered per filter graph before the memo starts again, so it cannot grow without end.
+const LEG_MEMO_MAX := 40000
+
+
+## The leg memo for the current filter and [param corridor], or null. It lives on that filter's
+## [AStar3D], so whatever rebuilds the native graph (a new filter, flags, links) forgets it too.
+func _leg_memo(corridor: float) -> Variant:
+	if not memo_legs or not use_native_search or not is_ready():
+		return null
+
+	var astar := _native_for(filter)
+	var key := &"dot_legs" if corridor < 0.0 else StringName("dot_legs_%s" % corridor)
+	var memo: Dictionary = astar.get_meta(key, {})
+
+	if memo.is_empty() or int(memo.get(&"count", 0)) > LEG_MEMO_MAX:
+		memo = {&"count": 0}
+		astar.set_meta(key, memo)
+
+	return memo
+
+
+func _leg_walkable(memo: Variant, a: Vector3, b: Vector3, corridor: float) -> bool:
+	if memo == null:
+		return can_walk_straight(a, b, corridor)
+
+	var row: Dictionary = memo.get(a, {})
+	var known: Variant = row.get(b)
+
+	if known != null:
+		return known
+
+	var walkable := can_walk_straight(a, b, corridor)
+
+	if row.is_empty():
+		memo[a] = row
+	row[b] = walkable
+	memo[&"count"] = int(memo[&"count"]) + 1
+	return walkable
 
 
 ## [method find_path] with [method smooth_path] applied. What a follower wants.

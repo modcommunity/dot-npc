@@ -139,11 +139,13 @@ func health_fraction() -> float:
 ##
 ## A [Node2D] at `(x, y)` answers `Vector3(x, 0, y)`. See the note on [member node].
 func position() -> Vector3:
-	if not is_alive():
+	# is_alive() inlined: a horde asks this hundreds of times a tick.
+	if not alive or node == null or not is_instance_valid(node):
 		return Vector3.ZERO
 
-	if node is Node3D:
-		return (node as Node3D).global_position
+	var body := node as Node3D
+	if body != null:
+		return body.global_position
 
 	if node is Node2D:
 		return to_plane((node as Node2D).global_position)
@@ -179,11 +181,12 @@ static func from_plane(at: Vector3) -> Vector2:
 
 ## Where it is looking. -Z, Godot's forward, in world space.
 func facing() -> Vector3:
-	if not is_alive():
+	if not alive or node == null or not is_instance_valid(node):
 		return Vector3.FORWARD
 
-	if node is Node3D:
-		return -(node as Node3D).global_transform.basis.z.normalized()
+	var body := node as Node3D
+	if body != null:
+		return -body.global_transform.basis.z.normalized()
 
 	if node is Node2D:
 		# A Node2D's rotation is around the screen normal, and this addon's plane puts
