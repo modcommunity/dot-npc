@@ -69,6 +69,11 @@ var neighbour_reach: float = 1.5
 ## that it is under the feet (a stair tread beside the flight's top step). Negative: the clearance.
 var obstacle_under_feet: float = -1.0
 
+## Metres within which two separate pieces of the graph are joined by their nearest pair of points, when
+## that pair is within a step in height and nothing solid is between. Zero is off. For a floor plan whose
+## rooms stop a metre short of each other (a threshold, a wall's thickness) and would be islands.
+var bridge_gap: float = 0.0
+
 ## How close a point must be to an obstacle to count as cover, in metres.
 ##
 ## One and a half body widths past the clearance. Closer and only points already
@@ -598,12 +603,70 @@ func _step_links() -> void:
 		var report := link_report()
 		DotLog.warn(CHANNEL, "navigation links found no point at one end", report)
 
+	if bridge_gap > 0.0:
+		_bridge_pieces()
+
 	_cursor = 0
 	_phase = Phase.COVER if generate_cover else Phase.DONE
 	_publish(W_POINTS + W_EDGES + W_LINKS, "cover" if generate_cover else "done")
 
 	if _phase == Phase.DONE:
 		_finish()
+
+
+## Joins the nearest pairs of points across pieces, shortest first, one join for each pair of pieces.
+func _bridge_pieces() -> void:
+	var parent := PackedInt32Array()
+	parent.resize(_positions.size())
+
+	for i in parent.size():
+		parent[i] = i
+
+	var edges := _nav.edges
+
+	for k in range(0, edges.size(), 2):
+		_join_pieces(parent, edges[k], edges[k + 1])
+
+	var found: Array[Vector3] = []
+
+	for i in _positions.size():
+		for j in _nav.points_within(_positions[i], bridge_gap):
+			if j <= i or _piece_of(parent, i) == _piece_of(parent, j):
+				continue
+
+			if absf(_positions[i].y - _positions[j].y) > _rise(_positions[i], _positions[j], _slopes[i], _slopes[j]):
+				continue
+
+			if not _crosses_obstacle(_positions[i], _positions[j]):
+				found.append(Vector3(_positions[i].distance_to(_positions[j]), i, j))
+
+	found.sort_custom(func(a: Vector3, b: Vector3) -> bool: return a.x < b.x or (a.x == b.x and (a.y < b.y or (a.y == b.y and a.z < b.z))))
+	var bridged := 0
+
+	for pair in found:
+		if _piece_of(parent, int(pair.y)) != _piece_of(parent, int(pair.z)):
+			_nav.connect_points(int(pair.y), int(pair.z))
+			_join_pieces(parent, int(pair.y), int(pair.z))
+			bridged += 1
+
+	if bridged > 0 and log_summary:
+		DotLog.debug(CHANNEL, "navigation pieces bridged", {"bridges": bridged, "gap": bridge_gap})
+
+
+static func _piece_of(parent: PackedInt32Array, i: int) -> int:
+	while parent[i] != i:
+		parent[i] = parent[parent[i]]
+		i = parent[i]
+
+	return i
+
+
+static func _join_pieces(parent: PackedInt32Array, a: int, b: int) -> void:
+	var ra := _piece_of(parent, a)
+	var rb := _piece_of(parent, b)
+
+	if ra != rb:
+		parent[rb] = ra
 
 
 func _step_cover() -> void:

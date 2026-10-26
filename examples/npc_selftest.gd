@@ -19,7 +19,7 @@ const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 const CHOOSER := "res://fixtures/chooser_brain.gd"
 
-const CHECKS := 239 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3
+const CHECKS := 239 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
@@ -570,6 +570,20 @@ func _test_nav_builder() -> void:
 		flat.add_floor(AABB(Vector3(p.x - 0.5, 0, p.z - 0.5), Vector3(1, 0, 1)), p.y)
 	_check(DotNpcNavGraph.new(flat.build(&"steps", "digest")).find_path(Vector3(0.5, 0.35, 2), Vector3(9.5, 6.65, 2), 1.0).is_empty(),
 		"while the same hill as floors is a step too far per point")
+
+	# Two rooms whose floors stop 1.5 m apart: islands until bridge_gap joins them, and a wall between them still holds.
+	var bridge_goal := Vector3(3.5, 0, 0.5)
+	for case in [[0.0, false, false], [2.5, false, true], [2.5, true, false]]:
+		var rooms := DotNpcNavBuilder.new()
+		rooms.spacing = 1.0
+		rooms.bridge_gap = case[0]
+		rooms.add_floor(AABB(Vector3(-3, 0, 0), Vector3(3, 0, 3)), 0.0)
+		rooms.add_floor(AABB(Vector3(1.5, 0, 0), Vector3(3, 0, 3)), 0.0)
+		if case[1]:
+			rooms.add_obstacle(AABB(Vector3(0.6, 0, -1), Vector3(0.2, 3, 6)))
+		var rooms_graph := DotNpcNavGraph.new(rooms.build(&"rooms", "digest"))
+		_check(rooms_graph.find_path(Vector3(-2.5, 0, 0.5), bridge_goal, 1.0).is_empty() != case[2],
+			"bridge_gap %s%s: rooms 1.5 m apart are %s" % [case[0], " with a wall between" if case[1] else "", "joined" if case[2] else "separate"])
 	_done()
 
 
