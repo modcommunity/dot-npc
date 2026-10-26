@@ -54,8 +54,13 @@ var line_of_sight_enabled: bool = true
 ## Physics collision mask used for the occlusion raycast.
 var occlusion_mask: int = 1
 
+## Tests the committed target first and then only rivals near enough to beat it, which picks
+## exactly what the full nearest-first pass picks with fewer rays. False runs that full pass.
+var prune_by_held: bool = true
+
 var sight_checks: int = 0
 var los_casts: int = 0
+var _ray := PhysicsRayQueryParameters3D.new()
 
 
 ## Whether [param npc] can perceive [param cand] right now, ignoring commitment.
@@ -118,17 +123,18 @@ func _has_line_of_sight(npc: DotNpcInstance, cand: Candidate) -> bool:
 
 	los_casts += 1
 
-	# From the eyes, not the feet: see [member DotNpcDef.eye_height].
-	var query := PhysicsRayQueryParameters3D.create(
-		npc.position() + Vector3.UP * npc.def.eye_height, cand.position, occlusion_mask
-	)
-	# Excluded by RID, which is what `exclude` takes — an instance id is an int and
-	# `Array[RID]` refuses it. A body that is not a CollisionObject3D has no RID to
-	# exclude and needs none: it is not in the physics world to be hit by the cast.
+	# One query reused (main thread only), from the eyes: see [member DotNpcDef.eye_height].
+	_ray.from = npc.position() + Vector3.UP * npc.def.eye_height
+	_ray.to = cand.position
+	_ray.collision_mask = occlusion_mask
+	# By RID, which is what `exclude` takes; a body that is not a CollisionObject3D is not in
+	# the physics world, so it needs no exclusion.
 	if npc.node is CollisionObject3D:
-		query.exclude = [(npc.node as CollisionObject3D).get_rid()]
+		_ray.exclude = [(npc.node as CollisionObject3D).get_rid()]
+	elif not _ray.exclude.is_empty():
+		_ray.exclude = []
 
-	return world.direct_space_state.intersect_ray(query).is_empty()
+	return world.direct_space_state.intersect_ray(_ray).is_empty()
 
 
 ## Picks or keeps a target for [param npc]. Returns its id, or empty for none.
@@ -262,11 +268,27 @@ func decide(npc: DotNpcInstance, candidates: Array, order: PackedInt32Array, hel
 	var committed: Candidate = null
 	var committed_distance := INF
 	var held_tested := false
+	var held_cand: Candidate = null
+
+	if held >= 0 and held < candidates.size():
+		held_cand = candidates[held] as Candidate
+		if held_cand != null and (held_cand.id != npc.target_id or held_cand.faction == npc.def.faction):
+			held_cand = null
+
+	if prune_by_held and held_cand != null:
+		# Held and perceived: only a rival under switch_ratio of its distance can change the
+		# answer, so the pass stops after the last such rival in order. Not perceived: the
+		# full pass below, which reuses this result instead of casting again.
+		if _perceives_at(npc, held_cand, held_cand.position - here):
+			return _decide_held(npc, candidates, order, held, held_cand, now)
+		held_tested = true
 
 	for index in order:
 		var cand := candidates[index] as Candidate
 
 		if index == held:
+			if held_tested and prune_by_held:
+				continue
 			held_tested = true
 
 		if _perceives_at(npc, cand, cand.position - here):
@@ -278,13 +300,9 @@ func decide(npc: DotNpcInstance, candidates: Array, order: PackedInt32Array, hel
 				committed_distance = best_distance
 			break
 
-	if not held_tested and held >= 0 and held < candidates.size():
-		var cand := candidates[held] as Candidate
-
-		if cand != null and cand.id == npc.target_id and cand.faction != npc.def.faction \
-				and _perceives_at(npc, cand, cand.position - here):
-			committed = cand
-			committed_distance = here.distance_to(cand.position)
+	if not held_tested and held_cand != null and _perceives_at(npc, held_cand, held_cand.position - here):
+		committed = held_cand
+		committed_distance = here.distance_to(held_cand.position)
 
 	if committed != null:
 		npc.target_seen_at = now
@@ -330,6 +348,39 @@ func decide(npc: DotNpcInstance, candidates: Array, order: PackedInt32Array, hel
 		npc.target_seen_at = now
 		npc.engaged_at = now
 		npc.target_since = now
+
+	return npc.target_id
+
+
+## [method decide] once the held target is perceived: the first perceived in [param order] up
+## to the last rival nearer than switch_ratio of its distance, which is what the full pass's
+## first perceived would be wherever the answer could differ.
+func _decide_held(npc: DotNpcInstance, candidates: Array, order: PackedInt32Array, held: int,
+		held_cand: Candidate, now: float) -> StringName:
+	var here := npc.position()
+	var limit := here.distance_to(held_cand.position) * switch_ratio
+	var last := -1
+
+	for r in order.size():
+		if here.distance_to((candidates[order[r]] as Candidate).position) < limit:
+			last = r
+
+	npc.target_seen_at = now
+	npc.engaged_at = now
+
+	for r in last + 1:
+		var index := order[r]
+
+		if index == held:
+			break
+
+		var cand := candidates[index] as Candidate
+
+		if _perceives_at(npc, cand, cand.position - here):
+			if cand.id != held_cand.id and here.distance_to(cand.position) < limit:
+				npc.target_id = cand.id
+				npc.target_since = now
+			break
 
 	return npc.target_id
 

@@ -19,13 +19,13 @@ const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 const CHOOSER := "res://fixtures/chooser_brain.gd"
 
-const CHECKS := 239 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11
+const CHECKS := 239 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
 ## bailed out early after a failed guard is counted as not finished on purpose. The CHECKS
 ## total is the other half — see docs/testing.md.
-const SECTIONS := 39
+const SECTIONS := 40
 
 var _passed := 0
 var _failed := 0
@@ -65,6 +65,7 @@ func _run() -> void:
 	_test_senses_commitment()
 	_test_senses_grace()
 	_test_senses_cap()
+	_test_senses_pruning()
 	_test_senses_workers()
 	_test_senses_quiet()
 	_test_target_since()
@@ -1314,6 +1315,64 @@ func _test_target_since() -> void:
 		is_equal_approx(npc.target_since, 30.0),
 		"and the clock starts again (%.1f)" % npc.target_since
 	)
+	_done()
+
+
+## Held-first pruning commits exactly as the full nearest-first pass, with fewer tests.
+func _test_senses_pruning() -> void:
+	_section("senses: held-first pruning")
+
+	var full := DotNpcSenses.new()
+	full.prune_by_held = false
+	var pruned := DotNpcSenses.new()
+	var def := DotNpcDef.make(&"pruner", BODY)
+	def.require_line_of_sight = false
+	def.sight_half_angle_deg = 60.0
+	def.sight_range = 30.0
+	def.hearing_range = 12.0
+	var npc := _loose_npc(def)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 4242
+	var same := 0
+	var switched := 0
+	var kept := 0
+	var trials := 600
+
+	for t in trials:
+		(npc.node as Node3D).rotation.y = rng.randf_range(-PI, PI)
+		var list: Array = []
+
+		for i in rng.randi_range(0, 14):
+			var at := Vector3(rng.randf_range(-35, 35), 0, rng.randf_range(-35, 35))
+			var faction := def.faction if rng.randf() < 0.15 else &"player"
+			list.append(_candidate(StringName("c%d" % i), at, faction, 20.0 if rng.randf() < 0.3 else 0.0))
+
+		var pick := rng.randi_range(-2, list.size() - 1)
+		var held: StringName = &"" if pick == -2 else (&"gone" if pick == -1 else (list[pick] as DotNpcSenses.Candidate).id)
+		var start := [held, rng.randf_range(0.0, 5.0), 1.0, 0.5]
+		var results: Array = []
+
+		for senses in [full, pruned]:
+			npc.target_id = start[0]
+			npc.target_seen_at = start[1]
+			npc.engaged_at = start[2]
+			npc.target_since = start[3]
+			var got: StringName = senses.update_target(npc, list, 6.0, 8)
+			results.append([got, npc.target_id, npc.target_seen_at, npc.engaged_at, npc.target_since])
+
+		if results[0] == results[1]:
+			same += 1
+
+		if held != &"" and results[1][1] == held:
+			kept += 1
+		elif held != &"" and results[1][1] != &"":
+			switched += 1
+
+	_check(same == trials, "every trial commits as the full pass does (%d of %d)" % [same, trials])
+	_check(kept > 50 and switched > 20, "and the trials cover both keeping and switching (%d kept, %d switched)" % [kept, switched])
+	_check(pruned.sight_checks < full.sight_checks,
+		"with fewer perception tests (%d against %d)" % [pruned.sight_checks, full.sight_checks])
+	npc.node.queue_free()
 	_done()
 
 

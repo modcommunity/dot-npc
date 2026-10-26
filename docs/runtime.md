@@ -34,6 +34,8 @@ Perception is the single biggest cost in the addon, so it is **staggered**: `sen
 
 **The candidate cap keeps the nearest.** Candidates out of reach (sight, or hearing within their loudness) take no slot; the rest are ranked nearest first and tested in that order until one is perceived, plus the committed target wherever it ranks. Ranking is pure over packed arrays (`DotNpcSenses.rank_many`), so `DotNpcSpawner.sense_workers` (a host copies `sv_threads_npc` into it) can run it on `DotParallel`; the tests and their rays stay on the main thread.
 
+**The committed target is tested first** (`DotNpcSenses.prune_by_held`, default true). When it is perceived, only a rival nearer than `switch_ratio` of its distance could take over, so the nearest-first pass stops after the last such rival; when it is not, the full pass runs without casting at it again. The answer is the full pass's exactly (the suite compares 600 random scenes against `prune_by_held = false`); at 100 players and 248 zombies it cast 15% fewer rays and took senses from 4.83 to 4.40 ms a tick with every kill and damage counter unchanged.
+
 **A quiet NPC senses less often.** `DotNpcLimits.sense_quiet_mult` (default 1, off) multiplies `sense_period_ticks` for an NPC whose last pass found nobody in reach and that holds no target; the moment a candidate comes in reach it is back on the normal period, so detection is late by at most `(mult - 1) * period` ticks. dot-game's `DotGameNpcLod` sets it from the `npc_sense_quiet` cvar.
 
 ### `sight_scale` is per NPC, the definition's range per kind
