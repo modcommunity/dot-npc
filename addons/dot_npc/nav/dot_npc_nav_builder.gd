@@ -74,6 +74,10 @@ var obstacle_under_feet: float = -1.0
 ## rooms stop a metre short of each other (a threshold, a wall's thickness) and would be islands.
 var bridge_gap: float = 0.0
 
+## A floor no wider than half a spacing holds no grid point (the first sits half a spacing in); on
+## puts one row or column at its middle, so a walkway cut into slivers is not a gap in the graph.
+var centre_narrow_floors: bool = false
+
 ## How close a point must be to an obstacle to count as cover, in metres.
 ##
 ## One and a half body widths past the clearance. Closer and only points already
@@ -323,6 +327,14 @@ const W_EDGES := 0.65
 const W_LINKS := 0.02
 const W_COVER := 0.23
 
+## Where a floor's first row or column of points goes along one axis.
+func _first_sample(start: float, size: float) -> float:
+	if centre_narrow_floors and size <= spacing * 0.5:
+		return start + size * 0.5
+
+	return start + spacing * 0.5
+
+
 func _step_floors() -> void:
 	# One grid column of one floor per call to the loop below, so a time slice can end between columns.
 	while _floor_index < _floors.size():
@@ -333,10 +345,10 @@ func _step_floors() -> void:
 		var floor_flags := int(floor_data.get("flags", 0))
 
 		if is_nan(_column):
-			_column = area.position.x + spacing * 0.5
+			_column = _first_sample(area.position.x, area.size.x)
 
 		while _column < area.position.x + area.size.x:
-			var z := area.position.z + spacing * 0.5
+			var z := _first_sample(area.position.z, area.size.z)
 
 			while z < area.position.z + area.size.z:
 				var p := Vector3(_column, height, z)

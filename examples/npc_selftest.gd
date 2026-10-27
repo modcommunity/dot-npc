@@ -19,7 +19,7 @@ const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 const CHOOSER := "res://fixtures/chooser_brain.gd"
 
-const CHECKS := 239 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3
+const CHECKS := 239 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
@@ -607,6 +607,18 @@ func _test_nav_builder() -> void:
 		var rooms_graph := DotNpcNavGraph.new(rooms.build(&"rooms", "digest"))
 		_check(rooms_graph.find_path(Vector3(-2.5, 0, 0.5), bridge_goal, 1.0).is_empty() != case[2],
 			"bridge_gap %s%s: rooms 1.5 m apart are %s" % [case[0], " with a wall between" if case[1] else "", "joined" if case[2] else "separate"])
+
+	# A walkway cut into 0.4 m strips holds no grid point unless centre_narrow_floors puts one in the middle of each.
+	for centred in [false, true]:
+		var strips := DotNpcNavBuilder.new()
+		strips.spacing = 1.0
+		strips.centre_narrow_floors = centred
+		for k in 6:
+			strips.add_floor(AABB(Vector3(0, 0, k * 0.4), Vector3(3, 0, 0.4)), 0.0)
+		strips.add_floor(AABB(Vector3(0, 0, -3), Vector3(3, 0, 3)), 0.0)
+		strips.add_floor(AABB(Vector3(0, 0, 2.4), Vector3(3, 0, 3)), 0.0)
+		_check(DotNpcNavGraph.new(strips.build(&"strips", "digest")).find_path(Vector3(1.5, 0, -2.5), Vector3(1.5, 0, 4.9), 1.0).is_empty() != centred,
+			"centre_narrow_floors %s: rooms joined by a walkway of 0.4 m strips are %s" % [centred, "joined" if centred else "separate"])
 	_done()
 
 
