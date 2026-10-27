@@ -73,6 +73,56 @@ var _native: Dictionary = {}
 var _copies: Dictionary = {}
 
 
+## Point index -> [expires_at, factor]: places where a walker stalled, costed up for everybody until they expire.
+var _bad: Dictionary = {}
+
+
+## Makes arriving at the point nearest [param at] cost [param factor] times as much until [param until] (the caller's clock), so
+## every later search goes round it when it can. Returns the point's index, or -1 when none is within [param radius].
+func mark_bad(at: Vector3, until: float, factor: float = 6.0, radius: float = 1.5) -> int:
+	if data == null:
+		return -1
+
+	var index := data.nearest_point(at, radius)
+
+	if index < 0:
+		return -1
+
+	var old := float((_bad[index] as Array)[1]) if _bad.has(index) else 1.0
+	_bad[index] = [until, factor]
+	_apply_bad(index, old, factor)
+	return index
+
+
+## Forgets the penalties that ran out by [param now].
+func expire_bad(now: float) -> void:
+	for index: int in _bad.keys():
+		if float((_bad[index] as Array)[0]) <= now:
+			var old := float((_bad[index] as Array)[1])
+			var _gone := _bad.erase(index)
+			_apply_bad(index, old, 1.0)
+
+
+## How many places are costed up right now.
+func bad_count() -> int:
+	return _bad.size()
+
+
+# The cached searches carry the weight (each has its own filter's cost in it, so scale by the change).
+func _apply_bad(index: int, old: float, factor: float) -> void:
+	var lists: Array = []
+
+	for key: String in _native:
+		lists.append(_native[key])
+
+	for key: String in _copies:
+		lists.append_array((_copies[key] as Dictionary)["list"])
+
+	for astar: AStar3D in lists:
+		if astar.has_point(index):
+			astar.set_point_weight_scale(index, astar.get_point_weight_scale(index) / old * factor)
+
+
 func _init(p_data: DotNpcNavData = null) -> void:
 	if p_data != null:
 		rebuild(p_data)
@@ -487,6 +537,9 @@ func _native_for(with: DotNpcNavFilter) -> AStar3D:
 		if with != null:
 			weight = with.cost_multiplier(data.area_of(i), data.flags_of(i))
 
+		if _bad.has(i):
+			weight *= float((_bad[i] as Array)[1])
+
 		astar.add_point(i, data.points[i], weight)
 
 		if with != null and not with.passes(data.area_of(i), data.flags_of(i)):
@@ -585,6 +638,9 @@ func _search(start: int, goal: int) -> Dictionary:
 				step *= filter.cost_multiplier(
 					data.area_of(next), data.flags_of(next)
 				)
+
+			if _bad.has(next):
+				step *= float((_bad[next] as Array)[1])
 
 			var new_cost := float(cost_so_far[current]) + step
 

@@ -19,7 +19,7 @@ const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 const CHOOSER := "res://fixtures/chooser_brain.gd"
 
-const CHECKS := 239 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2 + 3
+const CHECKS := 239 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2 + 3 + 2
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
@@ -455,6 +455,21 @@ func _test_nav_data() -> void:
 		round_tripped.point_count() == 2 and round_tripped.edge_count() == 1,
 		"and nav data survives a round trip"
 	)
+
+	# Two equal ways round a block; a place marked bad is gone round by everyone until it expires.
+	var diamond := DotNpcNavData.new()
+	diamond.map_id = &"diamond"
+	diamond.source_digest = "d"
+	for p: Vector3 in [Vector3(0, 0, 0), Vector3(4, 0, 3), Vector3(4, 0, -3), Vector3(8, 0, 0)]:
+		var _i := diamond.add_point(p)
+	var _e := [diamond.connect_points(0, 1), diamond.connect_points(1, 3), diamond.connect_points(0, 2), diamond.connect_points(2, 3)]
+	var dg := DotNpcNavGraph.new(diamond)
+	var _warm := dg.find_path(Vector3.ZERO, Vector3(8, 0, 0), 1.0)
+	var bad_at := dg.mark_bad(Vector3(4, 0, 3), 10.0, 6.0, 0.5)
+	var around := dg.find_path(Vector3.ZERO, Vector3(8, 0, 0), 1.0)
+	_check(bad_at == 1 and dg.bad_count() == 1 and around.has(Vector3(4, 0, -3)) and not around.has(Vector3(4, 0, 3)), "a point marked bad is gone round")
+	dg.expire_bad(11.0)
+	_check(dg.bad_count() == 0, "and forgiven when its time is up")
 	_done()
 
 
