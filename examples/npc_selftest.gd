@@ -19,7 +19,7 @@ const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 const CHOOSER := "res://fixtures/chooser_brain.gd"
 
-const CHECKS := 239 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3
+const CHECKS := 239 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
@@ -523,6 +523,29 @@ func _test_nav_builder() -> void:
 		not linked.find_path(Vector3(0, 0, 0), Vector3(0, 6, 0), 2.0).is_empty(),
 		"and a declared link is what joins two storeys"
 	)
+
+	# A ladder stands in a wall, away from the grid: a wide reach finds the floor either side, and only at its own height.
+	var shaft := DotNpcNavBuilder.new()
+	shaft.spacing = 2.0
+	shaft.add_floor(AABB(Vector3(-4, 0, -4), Vector3(8, 0, 8)), 0.0)
+	shaft.add_floor(AABB(Vector3(-4, 0, -4), Vector3(8, 0, 8)), 6.0)
+	shaft.add_link(Vector3(9, 0.1, 0), Vector3(9, 6, 0))
+	var near_only := DotNpcNavGraph.new(shaft.build(&"shaft", "digest"))
+	_check(near_only.find_path(Vector3(0, 0, 0), Vector3(0, 6, 0), 2.0).is_empty(), "a link end beyond twice the spacing finds no point")
+	var reach := DotNpcNavBuilder.new()
+	reach.spacing = 2.0
+	reach.add_floor(AABB(Vector3(-4, 0, -4), Vector3(8, 0, 8)), 0.0)
+	reach.add_floor(AABB(Vector3(-4, 0, -4), Vector3(8, 0, 8)), 6.0)
+	reach.add_link(Vector3(7, 3, 0), Vector3(7, 6, 0), 0, 6.0, 1.0)
+	_check(DotNpcNavGraph.new(reach.build(&"reach", "digest")).find_path(Vector3(0, 0, 0), Vector3(0, 6, 0), 2.0).is_empty(),
+		"a link given a reach still takes only points near the height of its end (no floor within 1 m of y 3)")
+	var tall := DotNpcNavBuilder.new()
+	tall.spacing = 2.0
+	tall.add_floor(AABB(Vector3(-4, 0, -4), Vector3(8, 0, 8)), 0.0)
+	tall.add_floor(AABB(Vector3(-4, 0, -4), Vector3(8, 0, 8)), 6.0)
+	tall.add_link(Vector3(7, 0.1, 0), Vector3(7, 6, 0), 0, 6.0, 1.0)
+	_check(not DotNpcNavGraph.new(tall.build(&"tall", "digest")).find_path(Vector3(0, 0, 0), Vector3(0, 6, 0), 2.0).is_empty(),
+		"and a link given a reach joins the floors from outside the grid")
 
 	# A room, a doorway and a street, each laid from its own corner, so their grids are offset
 	# by a fraction of a step. Rounding positions to the grid used to merge the room's last row

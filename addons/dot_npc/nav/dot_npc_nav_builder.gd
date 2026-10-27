@@ -174,8 +174,12 @@ func add_obstacle(box: AABB) -> void:
 ## a map with two storeys has two disconnected graphs and an NPC upstairs can never
 ## reach the ground. A stair built as a ramp is one floor and is fine; a stair built as
 ## steps is not, which is most of them here.
-func add_link(from: Vector3, to: Vector3, link_flags: int = 0) -> void:
-	_links.append([from, to, link_flags])
+##
+## [param reach] above 0 widens the search for a point at each end from the default (twice the spacing) to that many metres,
+## and takes only points within [param height_tolerance] of the end's height, for a ladder whose ends stand in a wall
+## and a shaft rather than on the grid.
+func add_link(from: Vector3, to: Vector3, link_flags: int = 0, reach: float = 0.0, height_tolerance: float = 1.5) -> void:
+	_links.append([from, to, link_flags, reach, height_tolerance])
 
 
 ## Generates the data in one call, on this thread. [param digest] comes from [method DotNpcNavData.digest_of].
@@ -576,12 +580,23 @@ func _run_chunk(index: int) -> void:
 	_lock.unlock()
 
 
+func _link_end(pair: Array, end: int) -> int:
+	var reach: float = pair[3] if pair.size() > 3 else 0.0
+
+	if reach <= 0.0:
+		return _nav.nearest_point(pair[end], spacing * 2.0)
+
+	var at: Vector3 = pair[end]
+	var tolerance: float = pair[4]
+	return _nav.nearest_point_where(at, reach, func(p: int) -> bool: return absf(_nav.points[p].y - at.y) <= tolerance)
+
+
 func _step_links() -> void:
 	while _cursor < _links.size():
 		var pair: Array = _links[_cursor]
 		_cursor += 1
-		var a := _nav.nearest_point(pair[0], spacing * 2.0)
-		var b := _nav.nearest_point(pair[1], spacing * 2.0)
+		var a := _link_end(pair, 0)
+		var b := _link_end(pair, 1)
 
 		if a >= 0 and b >= 0 and a != b:
 			_nav.connect_points(a, b)
