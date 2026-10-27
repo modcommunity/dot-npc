@@ -19,7 +19,7 @@ const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 const CHOOSER := "res://fixtures/chooser_brain.gd"
 
-const CHECKS := 239 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2
+const CHECKS := 239 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2 + 3
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
@@ -2014,6 +2014,22 @@ func _test_spawner_pathing() -> void:
 		"new points clear the partial flag, so it never describes the previous path"
 	)
 	_check(path_flag.reaches_goal(), "and a complete path says it reaches its goal")
+
+	# A far goal that moves a little re-plans only with the plain drift, not with a drift ratio.
+	npc.node.global_position = Vector3(-9, 0, -9)
+	var drifting := DotNpcPath.new()
+	spawner.path_toward(npc, drifting, far)
+	var searched := spawner.nav.searches
+	spawner.path_toward(npc, drifting, far + Vector3(3, 0, 0))
+	_check(spawner.nav.searches == searched + 1, "a goal that moved past the drift is searched for again")
+	spawner.repath_drift_ratio = 0.5
+	spawner.path_toward(npc, drifting, far + Vector3(6, 0, 0))
+	_check(spawner.nav.searches == searched + 1, "but with a drift ratio a far one does not re-plan for a small move")
+	spawner.repath_drift_ratio = 0.0
+	spawner.repath_interval_per_m = 1.0
+	drifting.computed_at = spawner.now() - 5.0
+	spawner.path_toward(npc, drifting, far + Vector3(3, 0, 0))
+	_check(spawner.nav.searches == searched + 1, "and an interval per metre holds the forced repath off for a far goal")
 
 	spawner.queue_free()
 	_done()

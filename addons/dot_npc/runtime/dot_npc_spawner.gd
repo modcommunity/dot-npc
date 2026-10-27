@@ -178,8 +178,16 @@ var _packed := DotNpcSenses.Packed.new()
 ## How far a goal may move before a path is recomputed, in metres.
 var repath_drift: float = 2.5
 
+## The goal may also move this share of the distance to it before a repath: a chaser far off
+## does not need a new route for every step its quarry takes. 0 is [member repath_drift] alone.
+var repath_drift_ratio: float = 0.0
+
 ## Seconds between forced repaths even when the goal has not moved.
 var repath_interval: float = 1.5
+
+## Seconds per metre to the goal added to the forced repath: a far NPC re-plans less often than
+## one at its quarry's heels. 0 is [member repath_interval] alone.
+var repath_interval_per_m: float = 0.0
 
 ## Worker threads answering a tick's repaths together ([method DotNpcNavGraph.find_paths]).
 ## 0 searches inline as each brain asks. Above 0 (-1 automatic) a repath is queued and answered
@@ -302,7 +310,15 @@ func path_toward(npc: DotNpcInstance, path: DotNpcPath, goal: Vector3) -> Vector
 	if not has_nav() or npc == null or not npc.is_alive() or path == null:
 		return goal
 
-	var due := path.needs_repath(_now, goal, repath_interval, repath_drift)
+	var drift := repath_drift
+	var interval := repath_interval
+
+	if repath_drift_ratio > 0.0 or repath_interval_per_m > 0.0:
+		var gap := npc.position().distance_to(goal)
+		drift = maxf(drift, repath_drift_ratio * gap)
+		interval = maxf(interval, repath_interval_per_m * gap)
+
+	var due := path.needs_repath(_now, goal, interval, drift)
 
 	if due and DotParallel.resolve_workers(path_workers) > 0:
 		_queue_path(npc, path, goal)
