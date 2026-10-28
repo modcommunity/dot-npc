@@ -69,6 +69,10 @@ var neighbour_reach: float = 1.5
 ## that it is under the feet (a stair tread beside the flight's top step). Negative: the clearance.
 var obstacle_under_feet: float = -1.0
 
+## How far above a point an obstacle's underside may be and still block it, in metres: a body that tall does not
+## fit in the gap (a desk top on legs). Negative: the clearance, which lets a body walk under anything 0.35 m up.
+var obstacle_overhead: float = -1.0
+
 ## Metres within which two separate pieces of the graph are joined by their nearest pair of points, when
 ## that pair is within a step in height and nothing solid is between. Zero is off. For a floor plan whose
 ## rooms stop a metre short of each other (a threshold, a wall's thickness) and would be islands.
@@ -849,6 +853,10 @@ func _already_placed(p: Vector3, seen: Dictionary, positions: Array[Vector3], wi
 	return false
 
 
+func _overhead() -> float:
+	return clearance if obstacle_overhead < 0.0 else obstacle_overhead
+
+
 func _under_feet() -> float:
 	return clearance if obstacle_under_feet < 0.0 else obstacle_under_feet
 
@@ -867,7 +875,12 @@ func _blocked(p: Vector3) -> bool:
 	for index: int in (bucket as PackedInt32Array):
 		var box: AABB = _obstacles[index]
 
-		if box.end.y >= p.y - _under_feet() and box.grow(clearance).has_point(p):
+		if box.end.y < p.y - _under_feet() or box.end.y + clearance < p.y or box.position.y > p.y + _overhead():
+			continue
+
+		var wide := box.grow(clearance)
+
+		if p.x >= wide.position.x and p.x <= wide.end.x and p.z >= wide.position.z and p.z <= wide.end.z:
 			return true
 
 	return false
