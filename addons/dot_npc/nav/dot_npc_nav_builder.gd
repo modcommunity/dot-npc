@@ -1,64 +1,25 @@
 class_name DotNpcNavBuilder
 extends RefCounted
 
-## Turns a code-built map's own constants into [DotNpcNavData]. What a game's
-## `tools/export_nav.gd` calls.
-##
-## [b]The generator lives in the addon and the constants live in the game.[/b] A map
-## here is a script that builds boxes from numbers, so the only thing that knows where
-## the floors are is that script — and the only honest navigation is one derived from
-## the same numbers. This class is the derivation: a game hands it the walkable
-## rectangles it drew its floors from, plus the obstacles it drew its walls from, and
-## gets a point graph back.
-##
-## [codeblock]
-## # game/tools/export_nav.gd
-## var builder := DotNpcNavBuilder.new()
-## builder.spacing = 2.0
-## for floor_rect in PgLobby.FLOORS:
-##     builder.add_floor(floor_rect.aabb, floor_rect.height)
-## for wall in PgLobby.WALLS:
-##     builder.add_obstacle(wall)
-## var nav := builder.build(&"pg_lobby", DotNpcNavData.digest_of(PgLobby.CONSTANTS))
-## ResourceSaver.save(nav, "res://maps/pg_lobby.nav.tres")
-## [/codeblock]
-##
-## [b]The digest is the whole safety property.[/b] Nothing here can tell that a wall
-## moved; what it can do is record a hash of the constants it was given, so a suite
-## comparing that hash with the map's current constants fails the moment somebody moved
-## a wall and did not re-run the tool. A navmesh that has drifted from its geometry is
-## an NPC walking through a wall, and it is invisible until a person watches one do it.
-##
-## [b]A grid, not a Delaunay triangulation or a recast voxelisation.[/b] Both are
-## better on authored geometry and both are the wrong trade here: the input is a
-## handful of axis-aligned boxes and a grid over them is exact, is fifty lines, and is
-## something a person reading the suite can check by hand. Recast exists for the case
-## where the geometry is a mesh nobody described — which is not this case.
+## Turns a code-built map's own constants into [DotNpcNavData]; what a game's `tools/export_nav.gd` calls.
+## A game hands it the walkable rectangles and obstacle boxes it drew the map from, and gets a point graph back.
+## The recorded digest of those constants is what fails a suite when a wall moves and the tool was not re-run.
 
 const CHANNEL := "npc.nav"
 
 ## Metres between graph points. Smaller is a better path and a slower search.
-##
-## [b]Two metres is the default because it is about a body width.[/b] Finer buys paths
-## no player can tell apart and costs the A* quadratically; coarser starts cutting
-## corners an NPC then walks into.
+## Two metres is about a body width: finer buys paths nobody can tell apart, coarser cuts corners.
 var spacing: float = 2.0
 
 ## How far from a point an NPC still counts as on the graph. Written into the data.
 var point_radius: float = 2.0
 
 ## How far a point must be from an obstacle box to be kept, in metres.
-##
-## Half a body, so an NPC standing on the last legal point is not inside the wall. A
-## radius of zero puts points against the geometry and every path scrapes it.
+## Half a body: zero puts points against the geometry and every path scrapes it.
 var clearance: float = 0.6
 
 ## Whether to record cover spots beside the obstacles.
-##
-## On, because it costs one pass over the points at generation time and a game that
-## does not use cover simply never asks for it. The spots are content: a runtime that
-## was handed a graph cannot raycast the map it came from, so if the generator does
-## not write them down nothing can ever answer "where can I hide from that".
+## A runtime handed a graph cannot raycast the map it came from, so the spots must be written here.
 var generate_cover: bool = true
 
 ## How far, in spacings, two points may be and still join. 1.5 takes the grid's diagonal; 1.6 also
@@ -83,10 +44,7 @@ var bridge_gap: float = 0.0
 var centre_narrow_floors: bool = false
 
 ## How close a point must be to an obstacle to count as cover, in metres.
-##
-## One and a half body widths past the clearance. Closer and only points already
-## scraping the wall qualify; further and the middle of a corridor is "cover", which
-## makes an NPC take cover in the open and is worse than having no cover at all.
+## Closer and only points scraping the wall qualify; further and a corridor's middle is "cover".
 var cover_range: float = 1.6
 
 ## Walkable areas as {aabb, height, area_id, flags} — the floors the map built.
@@ -176,16 +134,9 @@ func add_obstacle(box: AABB) -> void:
 	_cover_cells.clear()
 
 
-## Forces a connection between two places the grid would not join — a ladder, a drop.
-##
-## [b]Not optional in practice.[/b] The grid only connects neighbours on one floor, so
-## a map with two storeys has two disconnected graphs and an NPC upstairs can never
-## reach the ground. A stair built as a ramp is one floor and is fine; a stair built as
-## steps is not, which is most of them here.
-##
-## [param reach] above 0 widens the search for a point at each end from the default (twice the spacing) to that many metres,
-## and takes only points within [param height_tolerance] of the end's height, for a ladder whose ends stand in a wall
-## and a shaft rather than on the grid.
+## Forces a connection between two places the grid would not join, such as a ladder or a drop.
+## The grid joins neighbours on one floor only, so a stair built as steps needs one.
+## [param reach] above 0 widens the point search at each end to that many metres, within [param height_tolerance] of the end's height.
 func add_link(from: Vector3, to: Vector3, link_flags: int = 0, reach: float = 0.0, height_tolerance: float = 1.5) -> void:
 	_links.append([from, to, link_flags, reach, height_tolerance])
 
@@ -273,13 +224,9 @@ func begin(map_id: StringName, digest: String) -> void:
 	_publish(0.0, "points")
 
 
-## Runs the build for about [param budget_ms] milliseconds (0 = to the end) and returns whether it
-## finished. Call it once a frame on the main thread, or once with no budget on a worker thread.
-##
-## [b]Pure arithmetic on the builder's own members, no physics or scene tree[/b], so it is safe to
-## run off the main thread as long as nothing else touches this builder meanwhile. With [member workers]
-## above one and no budget, the edge and cover passes are split across [WorkerThreadPool] tasks; the
-## result is identical to the serial one (the pieces are merged in order).
+## Runs the build for about [param budget_ms] milliseconds (0 = to the end); returns whether it finished.
+## Pure arithmetic with no scene tree, so safe on a worker thread while nothing else touches the builder.
+## With [member workers] above one and no budget the edge and cover passes split across tasks, merged in order (same result).
 func step(budget_ms: float = 0.0) -> bool:
 	_deadline = Time.get_ticks_usec() + int(budget_ms * 1000.0) if budget_ms > 0.0 else -1
 
@@ -756,18 +703,9 @@ func _finish() -> void:
 	_publish(1.0, "done")
 
 
-## Records a cover spot beside every point that has an obstacle close enough to hide
-## behind, with the normal pointing at the obstacle.
-##
-## [b]One spot per point, not one per obstacle.[/b] A point in an inside corner has two
-## walls and would otherwise produce two spots in the same place with different
-## normals, which is not two places to hide — it is one place that is good against two
-## directions, and the query picks whichever wall is nearest to the threat anyway.
-##
-## Only [constant DotNpcNavData.Cover.IN_COVER] is generated. Source also classifies
-## sniper spots and exposed ledges, which needs long visibility traces over the whole
-## map; a generator with the geometry in front of it can add those itself, and the
-## flags exist so it can.
+## Records a cover spot beside every point that has an obstacle close enough to hide behind, normal pointing at it.
+## One spot per point, not per obstacle: an inside corner is one place good against two directions.
+## Only IN_COVER is generated; sniper and ledge spots need whole-map traces a generator can add itself.
 func _cover_at(i: int) -> Array:
 	if (_nav.flags_of(i) & DotNpcNavData.Flag.NO_HIDE) != 0:
 		return [Vector3.ZERO, false]
@@ -910,11 +848,8 @@ func _index_obstacles() -> void:
 
 
 ## Whether the straight line between two points passes through an obstacle.
-##
-## Sampled rather than solved. An exact segment-versus-AABB test is not hard and is not
-## what is wanted: what matters is that no sample sits inside, and the samples are a
-## metre apart on a grid whose cells are two — so anything a body could not fit through
-## is caught, and the cost is a handful of `has_point` calls at generation time only.
+## Sampled, not solved: all that matters is that no sample sits inside, and the samples are
+## closer than any body that could fit through, at generation-time cost only.
 func _crosses_obstacle(a: Vector3, b: Vector3) -> bool:
 	# Floor-divided, minimum two: a short edge still gets its midpoint. Rounding up added samples
 	# on ramp edges that land in the under-feet band of a box beside the ramp and split the ground.

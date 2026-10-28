@@ -12,6 +12,8 @@ A game with authored geometry should use Godot's navigation instead, and nothing
 
 ## The builder
 
+Usage, in a game's `tools/export_nav.gd`: `builder.add_floor(rect.aabb, rect.height)` for each floor and `builder.add_obstacle(wall)` for each wall, then `builder.build(&"pg_lobby", DotNpcNavData.digest_of(Constants))` and `ResourceSaver.save` the result. A grid, not a triangulation or voxelisation: the input is a handful of axis-aligned boxes, so a grid is exact and a person can check it by hand.
+
 - **A height difference greater than half a spacing is not a neighbour.** Without it a walkway passing over a floor joins to it and an NPC paths through the air. It is the single commonest thing wrong with a generated graph and the suite has a two-storey case for it.
 - **A stair built as steps is two disconnected graphs**, so `add_link()` is not optional. A ramp is one floor and is fine; most stairs here are not ramps.
 - **Neighbours reach 1.5 spacings (`neighbour_reach`; a game with narrow abutting floor rects sets 1.6).** One spacing misses the diagonal by root two and gives right-angled paths; two joins across a wall thin enough to hold no point.

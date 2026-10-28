@@ -1,12 +1,8 @@
 extends Node
 
 ## A crowd repathing in one tick: [method DotNpcNavGraph.find_paths] inline against N workers.
-##
-## [codeblock]
-## godot --headless --path . res://examples/path_bench.tscn -- [--npcs=256] [--workers=4] [--rounds=5] [--nav=<cache file>]
-## [/codeblock]
-## Without --nav the graph is a generated 180 m square crossed by walls. Prints one RESULT line,
-## and exits 1 if any answer differs between the two runs.
+## `godot --headless --path . res://examples/path_bench.tscn -- [--npcs=256] [--workers=4] [--rounds=5] [--nav=<cache file>]`
+## Without --nav the graph is a generated 180 m square crossed by walls. Prints one RESULT line; exits 1 if the runs differ.
 
 var _npcs := 256
 var _workers := 4
