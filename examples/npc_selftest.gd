@@ -19,7 +19,7 @@ const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 const CHOOSER := "res://fixtures/chooser_brain.gd"
 
-const CHECKS := 239 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2 + 3 + 2 + 3
+const CHECKS := 239 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2 + 3 + 2 + 3 + 2
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
@@ -447,6 +447,15 @@ func _test_nav_data() -> void:
 		"and stops matching when a constant moves by a centimetre",
 		"var_to_str rather than str, or the float would round to the same string"
 	)
+
+	var cache := nav.to_cache_bytes()
+	_check(DotNpcNavData.from_cache_bytes(cache) != null, "a current-version cache loads")
+	var old := bytes_to_var(cache.slice(4).decompress(cache.decode_u32(0), FileAccess.COMPRESSION_GZIP)) as Dictionary
+	old["format"] = DotNpcNavData.FORMAT_VERSION - 1
+	var raw := var_to_bytes(old)
+	var old_bytes := PackedByteArray([0, 0, 0, 0]) + raw.compress(FileAccess.COMPRESSION_GZIP)
+	old_bytes.encode_u32(0, raw.size())
+	_check(DotNpcNavData.from_cache_bytes(old_bytes) == null, "a cache from an older version is rejected, so it is rebuilt")
 
 	_check(not nav.connect_points(0, 9).ok, "an edge off the end is refused")
 

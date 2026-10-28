@@ -38,12 +38,17 @@ extends Resource
 # No log channel: the document the exporter writes. validate() returns a DotResult and
 # the spawner that adopts it logs the outcome with the map in hand.
 
-## Bumped when the on-disk shape changes.
+## Bumped when the on-disk shape changes, and whenever [DotNpcNavBuilder] logic changes what
+## it builds from the same inputs (the digest hashes constants only, so a cache built by an
+## older builder would otherwise be reused as fresh). A stale cache is rebuilt, not an error.
 ##
 ## 2 added per-point areas and flags and the cover list. A version 1 document still
 ## loads: the arrays are absent, every point is area 0 with no flags, and there is no
 ## cover — which is exactly what a graph generated before any of it existed described.
-const FORMAT_VERSION := 2
+## 3 retired caches built while the edge sampler rounded up and dropped walkable edges.
+const FORMAT_VERSION := 3
+
+const CHANNEL := "npc.nav.data"
 
 ## What a point is made of. An id, not a meaning: [DotNpcNavFilter] gives it a cost
 ## and a game decides what its own ids stand for.
@@ -609,7 +614,11 @@ static func from_cache_bytes(bytes: PackedByteArray) -> DotNpcNavData:
 	if raw.size() != size:
 		return null
 	var data: Variant = bytes_to_var(raw)
-	if not data is Dictionary or int((data as Dictionary).get("format", 0)) != FORMAT_VERSION:
+	if not data is Dictionary:
+		return null
+	var found := int((data as Dictionary).get("format", 0))
+	if found != FORMAT_VERSION:
+		DotLog.debug(CHANNEL, "nav cache rejected, will rebuild", {"format": found, "want": FORMAT_VERSION})
 		return null
 	var d := data as Dictionary
 	var nav := DotNpcNavData.new()
