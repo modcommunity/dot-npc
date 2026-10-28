@@ -19,7 +19,7 @@ const BODY_2D := "res://fixtures/npc_body_2d.tscn"
 const BRAIN := "res://fixtures/walker_brain.gd"
 const CHOOSER := "res://fixtures/chooser_brain.gd"
 
-const CHECKS := 239 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2 + 3 + 2
+const CHECKS := 239 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2 + 3 + 2 + 3
 
 ## Sections entered against sections that ran to their last line, and against this. A
 ## runtime error inside a section aborts that function and nothing says so; a section that
@@ -584,6 +584,19 @@ func _test_nav_builder() -> void:
 			if street.points[i].distance_to(street.points[j]) < 0.5:
 				crowded += 1
 	_check(crowded == 0, "and overlapping floors still do not put two points in one place", "%d pairs" % crowded)
+
+	# Edge sampling: a short diagonal must be sampled, a ramp edge must not hit a lower box.
+	var sampled := DotNpcNavBuilder.new()
+	sampled.spacing = 1.0
+	sampled.clearance = 0.35
+	sampled.add_obstacle(AABB(Vector3(-58.18, 3.54, 58.48), Vector3(0.3, 0.46, 0.3)))
+	sampled.add_obstacle(AABB(Vector3(-36.5, 0, -1), Vector3(1, 2.78, 2)))
+	_check(sampled._crosses_obstacle(Vector3(-57.95, 3.58, 58.05), Vector3(-57.45, 3.58, 58.75)),
+		"an edge shorter than one sample step is still tested (a diagonal clipping a prop's corner is dropped)")
+	_check(not sampled._crosses_obstacle(Vector3(-34.75, 2.89, -0.45), Vector3(-35.95, 3.39, -0.45)),
+		"a ramp edge climbing past a box just under its feet is kept")
+	_check(not sampled._crosses_obstacle(Vector3(-34.75, 2.89, 3.0), Vector3(-35.95, 3.39, 3.0)),
+		"and an edge clear of every box is kept")
 
 	# A 35 degree hillside beside a flat yard: slope points climb it, a floor's step would not.
 	var hillside := PackedVector3Array()

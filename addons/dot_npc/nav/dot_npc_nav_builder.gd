@@ -916,8 +916,9 @@ func _index_obstacles() -> void:
 ## metre apart on a grid whose cells are two — so anything a body could not fit through
 ## is caught, and the cost is a handful of `has_point` calls at generation time only.
 func _crosses_obstacle(a: Vector3, b: Vector3) -> bool:
-	# At least two steps: a shorter-than-a-cell edge was floor-divided to one step and never sampled, so a diagonal clipping a door frame's corner was kept.
-	var steps := maxi(ceili(a.distance_to(b) / maxf(spacing * 0.5, 0.1)), 2)
+	# Floor-divided, minimum two: a short edge still gets its midpoint. Rounding up added samples
+	# on ramp edges that land in the under-feet band of a box beside the ramp and split the ground.
+	var steps := maxi(int(a.distance_to(b) / maxf(spacing * 0.5, 0.1)), 2)
 
 	for i in range(1, steps):
 		if _blocked(a.lerp(b, float(i) / float(steps))):
