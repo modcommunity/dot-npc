@@ -1,10 +1,7 @@
 extends "res://addons/dot_npc/runtime/dot_npc_brain.gd"
 
 ## A brain for the self-test that makes its choices the moment it is bound, from its seed.
-##
-## What a real brain does with [member DotNpcInstance.seed]: an alert delay, a wander
-## direction, which of three branches to take. Drawn in [method _npc_ready] because that is
-## the earliest a brain can choose, and the seed has to be there by then.
+## Like a real brain with [member DotNpcInstance.seed]: drawn in [method _npc_ready], the earliest a brain can choose.
 
 var first_choices: Array[int] = []
 

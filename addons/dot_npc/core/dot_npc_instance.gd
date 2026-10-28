@@ -2,53 +2,24 @@ class_name DotNpcInstance
 extends RefCounted
 
 ## One NPC in the world: its definition, its node, its health and what it is chasing.
-##
-## [b]The state is kept here and not on the node[/b], for [DotPropInstance]'s reason:
-## metadata on a node is invisible to anything that did not put it there and
-## unreachable once the node is freed — and the one moment an NPC's state matters most
-## is the tick it dies on, which is the tick its node goes away.
+## State lives here, not on the node: it must outlive the node, and the tick an NPC dies
+## on is the tick its node goes away.
 
 var def: DotNpcDef = null
 
 ## The node in the world. May be freed; check with [method is_alive].
-##
-## [b]Typed [Node] rather than [Node3D], because an NPC is not always a 3D one.[/b] The
-## catalogue, the population budget, the per-kind cap, the perception, the commitment and
-## the reclaim are all about behaviour rather than about dimension, and a 2D game that had
-## to re-implement them would be re-implementing the addon to avoid a `Vector3`.
-##
-## [b]A 2D world is the XZ plane, and y is always zero.[/b] That is the whole of the
-## mapping and it is what lets everything above stay unchanged: [DotNpcSenses] compares
-## 3D distances, [DotNpcAiSteering] returns 3D directions, and [DotNpcNavData] is a graph
-## of 3D points — all of which are exactly right on a plane where one component never
-## moves. [method position] answers in that plane for a [Node2D] as well as a [Node3D], so
-## nothing downstream has to know which it is looking at; [method position_2d] converts
-## back for a caller that is drawing.
+## Typed [Node], not [Node3D], so a 2D game reuses the budget and senses; a 2D world is the XZ plane, y zero.
+## [method position] answers in that plane, [method position_2d] converts back for drawing.
 var node: Node = null
 
-## Godot's instance id for [member node]. The handle everything else uses.
-##
-## An id rather than the node itself, because a director holding a reference across
-## ticks needs a handle that is safe to compare and safe to hold after the node is
-## freed. A freed Node compared with `==` is undefined; an int is an int.
-##
-## [b]An identity, never a seed.[/b] It is the engine's object id, which depends on how many
-## objects the process created before this one, so anything drawn from it changes when an
-## unrelated object is added anywhere, and a replay disagrees with the run it recorded.
-## Seed choices from [member seed].
+## Godot's instance id for [member node]: a handle safe to compare and hold after the node is freed.
+## An identity, never a seed: it depends on how many objects the process created first, so
+## a replay would disagree. Seed choices from [member seed].
 var instance_id: int = 0
 
 ## This NPC's own random seed: the same number for the same spawn in every run.
-##
-## Set by [DotNpcSpawner] before the brain is bound, from the spawner's
-## [member DotNpcSpawner.seed_base] and either the game's own number for the NPC
-## ([member DotNpcSpawner.seed_source], usually its entity id) or the spawner's count of
-## spawns. Always above 1, because dot-npc-ai reads a character seed of 0 or 1 as "still the
-## preset's". Zero means nobody seeded it: an NPC built by hand rather than spawned.
-##
-## [b]Separate from [member instance_id] on purpose.[/b] The id was the seed until a measured
-## timing check in a game flipped on an unrelated commit: one extra object created at startup
-## moved every NPC's object id, and with it every NPC's choices.
+## Set by [DotNpcSpawner] before the brain is bound. Always above 1, because dot-npc-ai reads 0 or 1
+## as "still the preset's". Zero means built by hand. Not [member instance_id], which moves with unrelated objects.
 var seed: int = 0
 
 ## Who asked for it: a player id, a director's id, or empty for the map.
@@ -58,11 +29,8 @@ var owner_id: StringName = &""
 var spawned_at: float = 0.0
 
 ## Whether the spawner still considers this NPC to exist.
-##
-## [b]Separate from the node being valid, and it has to be.[/b] `queue_free()` is
-## deferred, so `is_instance_valid` stays true for the rest of the frame after an NPC
-## is removed — and a director that checked only the node would keep counting a
-## reclaimed NPC against its budget for as long as that frame lasts.
+## Separate from the node being valid: `queue_free()` is deferred, so a reclaimed NPC would
+## keep counting against the budget for the rest of the frame.
 var alive: bool = true
 
 var health: float = 0.0
@@ -71,44 +39,21 @@ var health: float = 0.0
 var target_id: StringName = &""
 
 ## Simulated seconds when [member target_id] was last actually perceived.
-##
-## Not when it was acquired: an NPC keeps chasing through a doorway for
-## [member DotNpcSenses.commitment_grace] seconds after it stops seeing anybody, and
-## that is measured from the last sighting.
+## Not when acquired: the commitment grace ([member DotNpcSenses.commitment_grace]) runs from the last sighting.
 var target_seen_at: float = 0.0
 
 ## Simulated seconds when anything last perceived it or it last had a target.
-##
-## What [member DotNpcLimits.reclaim_grace] is measured from.
-##
-## [b]This moves on EVERY pass in which the target is perceived, and that is what it is
-## for.[/b] It answers "is this NPC still busy" — which is the question a reclaim asks —
-## and it is deliberately NOT the answer to "how long has it known about this one". See
-## [member target_since], which exists because dot-npc-ai measured a reaction time against
-## this field and therefore never finished reacting.
+## What [member DotNpcLimits.reclaim_grace] is measured from. Moves every pass the target is
+## perceived; not a reaction timer, see [member target_since].
 var engaged_at: float = 0.0
 
 ## Simulated seconds when this NPC committed to its CURRENT target.
-##
-## [b]Set when [member target_id] CHANGES, and not while it is held.[/b] That is the whole
-## difference from [member engaged_at], and it is a real one: a reaction time measured
-## against a field that is refreshed every tick can never elapse, so every branch behind
-## such a gate never runs — and a bot that never acts on what it sees looks like a bot that
-## is bad rather than like one that is broken.
-##
-## dot-npc-ai's `has_reacted()` used `engaged_at` and was therefore always false for any
-## NPC that could currently see its target, which is every NPC that would ever act on one.
-## Found by game-playground putting a `DotNpcAiBrain` behind dot-npc's senses and watching
-## a hunter sit in ALERT for ever.
+## Set when [member target_id] changes, not while held: a reaction time measured against
+## [member engaged_at], refreshed every tick, can never elapse.
 var target_since: float = 0.0
 
 ## Multiplies the definition's sight range for this one NPC. 1.0 is "as the kind says".
-##
-## [b]Per instance, because how far a KIND can see and how attentive THIS one is are two
-## different facts.[/b] A brain sets it from its character — dot-npc-ai's `alertness` — and a
-## server turning its NPCs up or down moves it for every NPC at once without touching the
-## catalogue. Sight only: hearing is a loudness the game measured, and scaling it here would
-## be an NPC that hears a footstep further than the footstep travels.
+## Per instance: a kind's range and one NPC's attentiveness differ. Sight only; hearing is a measured loudness.
 var sight_scale: float = 1.0
 
 ## The last perception pass found nothing within reach (see [member DotNpcLimits.sense_quiet_mult]).
@@ -162,9 +107,7 @@ func position_2d() -> Vector2:
 
 
 ## Whether this NPC lives in a 2D world.
-##
-## Asked rather than inferred: a [DotNpcDef] deliberately says nothing about dimension,
-## and a host with a 2D world and a 3D preview is a legitimate thing to be.
+## Asked, not inferred: a [DotNpcDef] says nothing about dimension.
 func is_2d() -> bool:
 	return node is Node2D
 
@@ -189,10 +132,8 @@ func facing() -> Vector3:
 		return -body.global_transform.basis.z.normalized()
 
 	if node is Node2D:
-		# A Node2D's rotation is around the screen normal, and this addon's plane puts
-		# that screen on XZ — so a 2D heading of `rotation` is `(cos, 0, sin)`, and
-		# forward is that rather than -Z. Getting the axis wrong here is an NPC that
-		# perceives things behind it, which is a sight cone that appears not to work.
+		# A Node2D rotates around the screen normal and 2D here is the XZ plane, so heading is
+		# `(cos, 0, sin)` rather than -Z; the wrong axis gives a sight cone that seems not to work.
 		var angle := (node as Node2D).global_rotation
 		return Vector3(cos(angle), 0.0, sin(angle))
 

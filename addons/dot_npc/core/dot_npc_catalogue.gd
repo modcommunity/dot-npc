@@ -3,11 +3,8 @@ class_name DotNpcCatalogue
 extends Resource
 
 ## Every NPC kind a server offers, and the file an operator edits.
-##
-## Same shape and the same reasoning as [code]DotPropCatalogue[/code] and
-## [code]DotMapCatalogue[/code]: plain JSON, because the person maintaining it on a
-## community server is a person with a text editor; one bad entry does not condemn the
-## file; an exact id match wins a search.
+## Plain JSON for the person with a text editor; one bad entry does not condemn the file;
+## an exact id match wins a search. Same shape as DotPropCatalogue and DotMapCatalogue.
 
 const CHANNEL := "npc.catalogue"
 
@@ -44,24 +41,9 @@ func add(npc: DotNpcDef) -> DotResult:
 	return DotResult.success(npc)
 
 
-## Download every pack this catalogue's NPCs live in.
-##
-## [b]Nothing used to fetch these.[/b] A DotNpcDef has carried a `content_id` since it was
-## written and it is serialised onto the wire, but no code anywhere asked dot-cloud for
-## one — so a delivered NPC was refused with "that NPC's content is not loaded",
-## forever, on a server that had configured it perfectly. The refusal is correct and
-## that is what made it invisible: it reads as a missing pack rather than as a fetch
-## that never happens.
-##
-## [b]At load, not on demand.[/b] A spawn request is a player's, and turning one into a
-## download would let a player make this machine fetch — repeatedly, from whatever a
-## manifest names — by asking for something that is not there. The catalogue is known
-## before anyone connects, so this is a boot-time cost paid once. It also keeps the
-## spawn path synchronous, which is what every caller of it already assumes.
-##
-## Non-fatal by construction: a pack that will not download leaves that NPC
-## unspawnable and everything else working. See [method DotContent.ensure_all] for the
-## shape of the answer.
+## Download every pack this catalogue's NPCs live in. Non-fatal: a failed pack leaves that NPC unspawnable.
+## At load, not on demand: a spawn request is a player's and must not make this machine fetch,
+## and it keeps the spawn path synchronous. See [method DotContent.ensure_all].
 func ensure_content() -> DotResult:
 	if _by_id.size() != npcs.size():
 		_reindex()
@@ -182,10 +164,7 @@ func to_dictionary() -> Dictionary:
 
 
 ## Reads a catalogue, keeping the good entries and reporting the bad ones.
-##
-## [b]One bad entry does not condemn the file.[/b] A community server's catalogue is
-## hand-edited, and refusing to boot because entry forty is missing a scene path means
-## the operator has no NPCs at all rather than thirty-nine.
+## One bad entry must not leave the operator with no NPCs rather than thirty-nine.
 static func from_dictionary(data: Dictionary, rejected: PackedStringArray = PackedStringArray()) -> DotNpcCatalogue:
 	var cat := DotNpcCatalogue.new()
 	var rejected_before := rejected.size()
@@ -204,10 +183,8 @@ static func from_dictionary(data: Dictionary, rejected: PackedStringArray = Pack
 			if not added.ok:
 				rejected.append(added.error.message if added.error != null else "invalid")
 
-	# Said here, whatever the caller does with [param rejected], because the person who
-	# can fix entry forty is the operator with the text editor, and a dropped NPC
-	# otherwise surfaces as "that NPC does not exist" from a spawn much later. WARN, and
-	# the same line DotPropCatalogue and DotMapCatalogue write for the same reason.
+	# Said here whatever the caller does with [param rejected]: the operator who can fix the
+	# entry reads this, and a dropped NPC otherwise surfaces as "does not exist" much later.
 	if rejected.size() > rejected_before:
 		DotLog.warn(CHANNEL, "some npc entries were dropped", {
 			"count": rejected.size() - rejected_before,

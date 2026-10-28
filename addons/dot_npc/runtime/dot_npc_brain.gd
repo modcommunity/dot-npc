@@ -1,34 +1,9 @@
 class_name DotNpcBrain
 extends RefCounted
 
-## What one NPC decides, one tick at a time. The class a game's NPC script extends.
-##
-## [b]A [RefCounted] beside the node, not a script on it.[/b] The node is the
-## definition's scene and belongs to whoever made the art; a brain that had to be the
-## scene's root script would mean one scene per behaviour, which is exactly the
-## per-map-project mistake [DotNpcDef] exists to avoid. It also means one scene can
-## serve a dozen catalogue entries at different speeds, which is the cheap way to
-## ship NPCs and the way a sandbox actually does it.
-##
-## [b]A delivered brain extends this by PATH, never by name.[/b]
-##
-## [codeblock]
-## extends "res://addons/dot_npc/runtime/dot_npc_brain.gd"
-##
-## func _npc_think(delta: float) -> void:
-##     if not npc.has_target():
-##         return
-##     steer_along_path(target_position(), tune(&"speed", 3.0), delta)
-## [/codeblock]
-##
-## A script inside a mounted dot-cloud pack cannot resolve a [code]class_name[/code] —
-## the project's script cache was built long before the pack arrived — so
-## [code]extends DotNpcBrain[/code] fails to compile in exactly the deployment this
-## addon was shaped for. `extends "res://..."` works in both. game-playground's
-## entities already do this and say so.
-##
-## [b]This runs on the server only.[/b] See [DotNpcDirector] for why NPCs are not
-## predicted.
+## What one NPC decides, one tick at a time; the class a game's NPC script extends. Server only.
+## A [RefCounted] beside the node, so one scene serves many entries. A delivered brain extends this by path
+## (`extends "res://addons/dot_npc/runtime/dot_npc_brain.gd"`), never class_name, which a mounted pack cannot resolve.
 
 ## The NPC this brain drives. Set before [method _npc_ready].
 var npc: DotNpcInstance = null
@@ -44,7 +19,6 @@ var age: float = 0.0
 var path: DotNpcPath = null
 
 
-# --- Called by the director --------------------------------------------------
 
 func bind(p_npc: DotNpcInstance, p_director: Node) -> void:
 	npc = p_npc
@@ -54,13 +28,8 @@ func bind(p_npc: DotNpcInstance, p_director: Node) -> void:
 
 
 ## Lets go of the NPC, the director and anything a subclass built around them.
-##
-## [b]A brain and its NPC point at each other[/b] — [member npc] here, `brain` there —
-## and two [RefCounted]s that do are never freed: GDScript has no cycle collector. So
-## [DotNpcSpawner] calls this when it removes the NPC and again, for everything still
-## alive, when the spawner itself is freed, because a world is torn down by freeing its
-## nodes and never removes its NPCs one at a time. Measured in game-g2gfast: eleven
-## brains, contexts and tree nodes alive at exit, and the NPC scripts with them.
+## A brain and its NPC point at each other and two [RefCounted]s that do are never freed (no cycle
+## collector), so [DotNpcSpawner] calls this on removal and again for everything alive when it is freed.
 func unbind() -> void:
 	_npc_unbound()
 	npc = null
@@ -82,7 +51,6 @@ func died(by: StringName) -> void:
 	_npc_died(by)
 
 
-# --- Subclass interface ------------------------------------------------------
 
 ## Called once, after the node is in the world and the instance is registered.
 func _npc_ready() -> void:
@@ -111,13 +79,9 @@ func _npc_unbound() -> void:
 	pass
 
 
-# --- Helpers for subclasses --------------------------------------------------
 
 ## A tuning number from the definition's [code]meta[/code], or [param fallback].
-##
-## Tuning lives in the catalogue, not in the script, for the reason in the class note:
-## it is what lets one script serve several entries, and it is the only half of an NPC
-## an operator editing a JSON catalogue can reach.
+## Tuning lives in the catalogue so one script serves several entries and an operator can reach it.
 func tune(key: StringName, fallback: float) -> float:
 	if npc == null or npc.def == null:
 		return fallback
@@ -137,9 +101,7 @@ func tune_string(key: StringName, fallback: String = "") -> String:
 
 
 ## Where the committed target is, or [param fallback] when there is none.
-##
-## Asked of the director rather than kept here, because the position of a player is
-## the game's fact and a brain that cached one would chase where somebody was.
+## Asked of the director, not cached: a brain that cached a player's position would chase where they were.
 func target_position(fallback: Vector3 = Vector3.ZERO) -> Vector3:
 	if director == null or npc == null or not npc.has_target():
 		return fallback
@@ -153,11 +115,8 @@ func target_position(fallback: Vector3 = Vector3.ZERO) -> Vector3:
 
 
 ## Steers toward [param to], pathing around the level when there is navigation data.
-##
-## Falls back to steering straight at the goal when there is no path, which is a
-## decision rather than an oversight: an NPC that stood still whenever the navigation
-## generator had missed a corner would be a bug nobody could see the cause of, and one
-## that walks into a wall is a bug anybody watching can describe.
+## Falls back to steering straight at the goal when there is no path, on purpose: standing still
+## because the generator missed a corner is a bug nobody can see the cause of.
 func steer_along_path(to: Vector3, speed: float, delta: float) -> void:
 	if npc == null or not npc.is_alive():
 		return
@@ -174,9 +133,7 @@ func steer_along_path(to: Vector3, speed: float, delta: float) -> void:
 
 
 ## Drives the body's horizontal velocity toward [param to] at [param speed].
-##
-## Works on a [CharacterBody3D], a [RigidBody3D] or a plain [Node3D], because an NPC's
-## body is the definition's scene and this addon does not get to choose what that is.
+## Works on a [CharacterBody3D], a [RigidBody3D] or a plain [Node3D]: the body is the definition's scene.
 func steer_toward(to: Vector3, speed: float, delta: float) -> void:
 	if npc == null or not npc.is_alive():
 		return
@@ -227,10 +184,8 @@ func steer_toward(to: Vector3, speed: float, delta: float) -> void:
 		var rigid := body as RigidBody3D
 		var current := rigid.linear_velocity
 		var wanted_rigid := direction * speed
-		# Only the horizontal is written. Overwriting `y` on a rigid body cancels
-		# gravity and every impulse a physics gun or an explosion put into it, which
-		# turns an NPC into something that cannot be knocked about — and being able to
-		# punt one across the map is the first thing a sandbox player tries.
+				# Only the horizontal is written: overwriting `y` on a rigid body cancels gravity and every
+				# impulse, so an NPC could not be knocked about.
 		rigid.linear_velocity = Vector3(wanted_rigid.x, current.y, wanted_rigid.z)
 	else:
 		body.global_position += direction * speed * delta
@@ -253,24 +208,9 @@ func face(direction: Vector3) -> void:
 		return
 
 	var body := npc.node as Node3D
-	# `look_at` refuses a target equal to the node's own position and prints an error;
-	# the flat length check above is what keeps that off a server's log once a tick per
-	# NPC, which is the sort of thing that turns a log into noise nobody reads.
-	#
-	# [b]Plus, not minus.[/b] `look_at` points -Z at its target, and -Z is what
-	# [method DotNpcInstance.facing] reads. This used to look at `position - direction`,
-	# which turned every 3D NPC's back to where it was going: the sight cone the senses
-	# test pointed BEHIND a chasing monster, so a monster with a 60-degree cone lost the
-	# player it was running at every few seconds and reacquired them only by wandering
-	# round. Nobody saw it on a client because `DotNpcNetSync.yaw_of` was half a turn out
-	# the other way, and the two cancelled on screen. Found by dot-npc-ai's turn-rate
-	# check, which asked how far an NPC turned and was told 180 degrees.
-	#
-	# [b]And never from somewhere that is not a place.[/b] A body far enough out (one that
-	# fell out of a map and kept falling, or was flung to infinity) is a position a metre
-	# cannot change, and `look_at` printed its refusal once a think for every such NPC
-	# (game-zombie-zone's mall, sixty-five times in a run). The game takes such an NPC out of
-	# the world; this keeps the log clean until it does.
+		# `look_at` errors on a target equal to the node's position, so the flat length check keeps that off the log
+		# (and a body fallen out of the map). Look at `position + direction`: -Z is what [method DotNpcInstance.facing]
+		# reads, and `- direction` pointed the sight cone behind a chasing monster.
 	var origin := body.global_position
 	var target := origin + flat.normalized()
 

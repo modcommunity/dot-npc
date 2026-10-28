@@ -3,32 +3,8 @@ class_name DotNpcSpawner
 extends Node
 
 ## Spawns, senses, thinks, hurts and reclaims. The node a game with NPCs adds.
-##
-## [b]Server-authoritative, and NPCs are not predicted.[/b] The same decision
-## [DotPropSpawner] makes and for a stronger reason: an NPC's position is the output of
-## a pathfinder over a graph, a steering pass and — for a rigid-body NPC — a physics
-## solver, none of which is reproducible across machines. Two runs of the same horde
-## diverge within a second, so a predicted NPC is a corrected NPC and the correction is
-## constant. The server owns every NPC; a client draws what it is told, interpolated a
-## few tens of milliseconds behind. See [DotNpcNetSync] for what crosses the wire.
-##
-## [b]It does not own the tick.[/b] [method tick] is called by the game's simulation at
-## the game's fixed rate, exactly as [DotMatch] and [DotTimerManager] are, so an NPC's
-## speed is not a function of the frame rate and a headless suite can step it a
-## thousand times in no time at all.
-##
-## [codeblock]
-## var npcs := DotNpcSpawner.new()
-## npcs.catalogue = catalogue
-## npcs.limits = DotNpcLimits.new()
-## npcs.world_ref = DotNodeRef.of_path(^"../World")
-## npcs.authoritative = true
-## add_child(npcs)
-##
-## # Every simulated tick:
-## npcs.set_candidates(players_as_candidates())
-## npcs.tick(delta)
-## [/codeblock]
+## Server-authoritative, NPCs not predicted (pathfinder and solver are not reproducible); see [DotNpcNetSync].
+## It does not own the tick: the game calls [method tick] at its fixed rate, so a suite can step it a thousand times.
 
 const CHANNEL := "npc"
 
@@ -42,11 +18,7 @@ signal removed(npc: DotNpcInstance, reason: StringName)
 signal damaged(npc: DotNpcInstance, amount: float, by: StringName)
 
 ## Its health reached zero. Fired before [signal removed], while the node still exists.
-##
-## [b]Separate from [signal removed] on purpose.[/b] Dying and being reclaimed are not
-## the same event: one scores, drops loot and plays a sound, and the other is a
-## director tidying up something nobody could see. A game that had only `removed` would
-## either award a kill for the tidy-up or have to guess.
+## Separate from [signal removed]: dying scores and drops loot, reclaiming is a director tidying up.
 signal died(npc: DotNpcInstance, by: StringName)
 
 ## An NPC committed to something new, or let go. [param target] may be empty.
@@ -75,74 +47,41 @@ const REASON_ADMIN := &"admin"
 @export_group("Role")
 
 ## Whether this spawner may actually create NPCs. False on a client.
-##
-## Every mutating method refuses on a non-authoritative spawner before it checks
-## anything else, for [DotPropSpawner]'s reason: a client that could spawn is a
-## modified client that fills the world.
+## Every mutating method refuses first on a non-authoritative spawner: a client that could spawn fills the world.
 @export var authoritative: bool = false
 
 ## Whether this spawner serves a 2D world.
-##
-## [b]One flag rather than a 2D twin of everything that takes a point.[/b] A host sets it
-## once beside `authoritative`, because a spawner serves one world and a world has one
-## dimension — and everything that holds a point already holds it in this addon's plane
-## (see [member DotNpcInstance.node]), so the only question left is which spawn to route
-## it through. [method spawn_group] reads it, and so does [DotNpcDirector], which is
-## otherwise the one place a 2D game would have had to fork.
-##
-## [method spawn] and [method spawn_2d] stay separate and are NOT switched by this: a
-## caller holding a [Vector3] and a caller holding a [Vector2] are different callers, and
-## a signature that took either would be a signature that takes anything.
+## One flag set beside `authoritative`: a spawner serves one world. [method spawn_group] and [DotNpcDirector]
+## read it; [method spawn] and [method spawn_2d] stay separate, since a Vector3 caller and a Vector2 caller differ.
 @export var two_dimensional: bool = false
 
 @export_group("Randomness")
 
-## The session's seed for NPC choices: every NPC's [member DotNpcInstance.seed] is derived
-## from it.
-##
-## A game sets it from its own session or match seed (a [DotRandomStream] it already keeps,
-## or a seed an operator chose) so a replay can be given the recorded run's. Left at zero,
-## every server makes the same choices for the same sequence of spawns, which is
-## reproducible and is what a suite wants.
+## The session's seed for NPC choices: every NPC's [member DotNpcInstance.seed] is derived from it.
+## A game sets it from its own session or match seed so a replay can be given the recorded run's.
+## Left at zero, the same spawns make the same choices, which is what a suite wants.
 @export var seed_base: int = 0
 
 ## The game's own stable number for an NPC, or none. `func(npc: DotNpcInstance) -> int`.
-##
-## Called once per spawn, after the node is in the world and before the brain is bound, so
-## a brain's first choice already sees the result. The usual answer is the NPC's entity id:
-## a game that opens its `DotEntityTable` entry here and returns the id seeds each NPC from
-## the number the rest of the game knows it by. Zero (or no callable) falls back to this
-## spawner's own count of spawns. Typed as a [Callable] because naming dot-entity would make
-## this addon fail to parse without it.
-##
-## [b]Never return [code]node.get_instance_id()[/code].[/b] An engine object id depends on how
-## many objects the process created first, which is the bug [member DotNpcInstance.seed]
-## exists to fix.
+## Called once per spawn before the brain is bound; usually the entity id. Zero or no callable falls back to the
+## spawn count. A [Callable] because naming dot-entity would break parsing without it. Never return `get_instance_id()`.
 var seed_source: Callable = Callable()
 
 @export_group("Navigation")
 
 ## Remove the corners the grid put in a path that the world does not have.
-##
-## On. A graph on a two-metre grid can only turn in eight directions, so an NPC
-## crossing an open room walks a visible staircase — and it is the first thing anybody
-## watching one notices. Off is for a game whose own follower smooths, and for
-## measuring what smoothing is worth.
+## On: a two-metre grid turns in eight directions, so NPCs would walk a visible staircase.
+## Off is for a game whose own follower smooths.
 @export var smooth_paths: bool = true
 
 ## How many of a path's first points are smoothed; 0 smooths all of it.
-##
-## A follower repaths every [member repath_interval] and walks a few metres of a path before
-## it does, so the far end of a long path is smoothed for nobody. On a map of fifteen thousand
-## points with eighty NPCs chasing, smoothing whole paths was most of a path's cost once the
-## search itself was native. 16 is plenty for a 1.5 s repath at running speed.
+## A follower walks a few metres of a path before repathing, so the far end is smoothed for nobody, and
+## smoothing whole paths was most of a path's cost on a fifteen-thousand-point map. 16 suits a 1.5 s repath.
 @export var smooth_horizon: int = 0
 
 ## Walk toward an unreachable goal rather than standing still.
-##
-## On, for the reason [method DotNpcBrain.steer_along_path] falls back to steering
-## straight: an NPC that stops dead when the generator missed a corner is a bug nobody
-## can see the cause of. Detour reports the same thing as a partial result.
+## On, as in [method DotNpcBrain.steer_along_path]: an NPC that stops dead when the generator missed a corner
+## is a bug nobody can see the cause of.
 @export var allow_partial_paths: bool = true
 
 @export_group("Perception")
@@ -190,9 +129,8 @@ var repath_interval: float = 1.5
 var repath_interval_per_m: float = 0.0
 
 ## Worker threads answering a tick's repaths together ([method DotNpcNavGraph.find_paths]).
-## 0 searches inline as each brain asks. Above 0 (-1 automatic) a repath is queued and answered
-## after every brain has thought, so that one think follows the old path (or heads straight at the
-## goal). A host copies dot-server's [code]sv_threads_npc[/code] here; without threads it is inline.
+## 0 searches inline. Above 0 (-1 automatic) a repath is queued and answered after every brain has thought,
+## so that think follows the old path. A host copies dot-server's `sv_threads_npc` here.
 var path_workers: int = 0
 
 ## [DotNpcPath, DotNpcNavGraph.PathQuery, goal] per queued repath, in the order asked.
@@ -256,13 +194,10 @@ func _ready() -> void:
 		DotLog.warn(CHANNEL, "npc limits are not usable", {"why": valid.error.message})
 
 
-# --- Navigation ---------------------------------------------------------------
 
 ## Adopts navigation for the map now loaded. Null clears it.
-##
-## Called on every map change, because navigation is generated per map and one held
-## across a change is a graph of a level nobody is standing in — an NPC pathing over it
-## walks through walls, which is far worse than one with no navigation at all.
+## Called on every map change: navigation is per map, and a stale graph walks NPCs through walls,
+## which is worse than none.
 func set_nav_data(data: DotNpcNavData) -> DotResult:
 	_path_queue.clear()
 	_path_pending.clear()
@@ -274,11 +209,9 @@ func set_nav_data(data: DotNpcNavData) -> DotResult:
 	var graph := DotNpcNavGraph.new()
 	var built := graph.rebuild(data)
 
-	# Logged here because this is where a nav file meets the running server, whoever
-	# loaded it. Refused is WARN: NPCs fall back to walking straight at their goals,
-	# which is survivable and wants somebody to regenerate the file. Adopted is INFO,
-	# once per map, because "NPCs walk through walls" is first answered by whether
-	# navigation was loaded for this map at all.
+		# Logged here, where a nav file meets the running server. Refused is WARN (NPCs walk straight at goals;
+		# regenerate the file); adopted is INFO once per map, since "NPCs walk through walls" is first answered
+		# by whether navigation loaded at all.
 	if not built.ok:
 		nav = null
 		DotLog.warn(CHANNEL, "navigation refused; npcs will walk straight at goals", {
@@ -302,10 +235,8 @@ func has_nav() -> bool:
 
 
 ## The next point [param npc] should walk toward to reach [param goal].
-##
-## Called by [DotNpcBrain.steer_along_path]. Recomputes the path when it has drifted or
-## expired, and returns the goal itself when there is no navigation — which is the
-## documented fallback, not a failure.
+## Called by [DotNpcBrain.steer_along_path]. Recomputes the path when drifted or expired, and returns
+## the goal itself when there is no navigation, which is the documented fallback.
 func path_toward(npc: DotNpcInstance, path: DotNpcPath, goal: Vector3) -> Vector3:
 	if not has_nav() or npc == null or not npc.is_alive() or path == null:
 		return goal
@@ -323,10 +254,8 @@ func path_toward(npc: DotNpcInstance, path: DotNpcPath, goal: Vector3) -> Vector
 	if due and DotParallel.resolve_workers(path_workers) > 0:
 		_queue_path(npc, path, goal)
 	elif due:
-		# The filter is set per search rather than held on the graph, because one
-		# graph serves every NPC on the map and they do not agree about it: the thing
-		# that cannot crouch and the thing that can are asking different questions of
-		# the same points.
+				# The filter is set per search, not held on the graph: one graph serves every NPC and a
+				# thing that cannot crouch asks a different question of the same points.
 		nav.filter = _filter_for(npc.def)
 
 		var found := (
@@ -393,10 +322,7 @@ func answer_paths() -> void:
 
 
 ## The navigation filter for one kind of NPC, built once and kept.
-##
-## Cached because a filter is rebuilt on every repath otherwise — a few hundred
-## allocations a second on a busy server for an object whose contents never change
-## once the catalogue is loaded.
+## Cached because it is otherwise rebuilt on every repath, for contents that never change after load.
 func _filter_for(def: DotNpcDef) -> DotNpcNavFilter:
 	if def == null or def.nav_exclude_flags == 0:
 		return null
@@ -411,13 +337,10 @@ func _filter_for(def: DotNpcDef) -> DotNpcNavFilter:
 	return filter
 
 
-# --- Perception input ---------------------------------------------------------
 
 ## What the NPCs may perceive this tick. Called by the host before [method tick].
-##
-## [b]Pushed rather than pulled, and that is what keeps dot-combat and dot-net out of
-## this addon.[/b] A candidate is an id, a position, a faction and a loudness — data a
-## game already has about its players — so nothing here has to know what a player is.
+## Pushed, not pulled, which keeps dot-combat and dot-net out of this addon: a candidate is an id,
+## a position, a faction and a loudness.
 func set_candidates(candidates: Array) -> void:
 	_candidates = candidates
 	_candidate_positions.clear()
@@ -444,21 +367,17 @@ func candidate_count() -> int:
 	return _candidates.size()
 
 
-## The candidates last handed to [method set_candidates], as the same array (not a copy: the
-## host built it, and a per-tick copy of every player is what a reader like a pack's damage
-## seam would otherwise pay). Treat it as read-only. Exists so a pack can read who the NPCs
+## The candidates last handed to [method set_candidates], as the same array (not a copy, which a per-tick
+## copy of every player would make costly). Treat it as read-only. Lets a pack read who the NPCs
 ## perceive without reaching for the private field.
 func candidates() -> Array:
 	return _candidates
 
 
-# --- The tick -----------------------------------------------------------------
 
 ## One simulated tick: perceive, think, reclaim.
-##
-## The order is not arbitrary. Perception first so a brain thinks about this tick's
-## world rather than the last one's; reclaim last so an NPC that acquired a target this
-## tick is not reclaimed in the same tick for having had none.
+## Perception first so a brain thinks about this tick's world; reclaim last so an NPC that acquired
+## a target this tick is not reclaimed for having had none.
 func tick(delta: float) -> void:
 	if not authoritative:
 		return
@@ -604,7 +523,6 @@ func _reclaim() -> void:
 			remove(npc.instance_id, REASON_RECLAIMED)
 
 
-# --- Spawning -----------------------------------------------------------------
 
 ## Spawns one NPC. Null on refusal, with [signal refused] emitted.
 func spawn(
@@ -634,19 +552,8 @@ func spawn(
 
 
 ## The same spawn, into a 2D world.
-##
-## [b]A separate entry point rather than a widened signature[/b], for
-## [method DotPropSpawner.spawn_2d]'s reason: every existing caller passes a [Vector3] and
-## a [Basis], and a 2D one holds neither.
-##
-## [b]The plane is XZ.[/b] `at` is `(x, y)` on screen and becomes `(x, 0, y)` everywhere
-## inside this addon — see [member DotNpcInstance.node]. That is what lets the senses, the
-## navigation, the steering and the director run unchanged: every one of them measures a
-## 3D distance, and a 3D distance on a plane where one component never moves IS the 2D one.
-##
-## A 2D definition should set `line_of_sight` false: there is no 3D physics world to cast
-## through, and [method DotNpcSenses._has_line_of_sight] answers "clear" rather than
-## blinding every NPC in the game.
+## The plane is XZ: `at` is `(x, y)` and becomes `(x, 0, y)` inside this addon. A 2D definition should
+## set `line_of_sight` false: there is no 3D physics world to cast through.
 func spawn_2d(
 	npc_id: StringName,
 	at: Vector2,
@@ -720,10 +627,8 @@ func _prepare(npc_id: StringName, at: Vector3, owner_id: StringName) -> Array:
 
 
 ## Puts a placed node into the world and into the books, and gives it its brain.
-##
-## The world is resolved here rather than in [method _prepare], after the node exists —
-## the other order leaks the instantiated scene on a world that cannot be resolved, which
-## is a leak nothing reports because the spawn "correctly" refused.
+## The world is resolved here, after the node exists, in a way that does not leak the instantiated
+## scene when the world cannot be resolved.
 func _adopt(def: DotNpcDef, body: Node, owner_id: StringName) -> DotNpcInstance:
 	var resolved := _resolve_world()
 
@@ -759,10 +664,8 @@ func _adopt(def: DotNpcDef, body: Node, owner_id: StringName) -> DotNpcInstance:
 	var attached := attach_brain(npc)
 
 	if not attached.ok:
-		# The NPC still exists. A brain that would not load is a broken script, and
-		# deleting the NPC would hide which one — an inert NPC standing in the world is
-		# a thing an operator can see and name, which is the whole point of the log
-		# line beside it.
+				# The NPC still exists: deleting one whose brain would not load hides which script is broken,
+				# and an inert NPC is something an operator can see and name beside the log line.
 		DotLog.warn(CHANNEL, "an NPC spawned without its brain", {
 			"npc": String(def.id),
 			"why": attached.error.message,
@@ -774,10 +677,8 @@ func _adopt(def: DotNpcDef, body: Node, owner_id: StringName) -> DotNpcInstance:
 
 
 ## The seed an NPC gets for [param subject], a stable per-spawn number. Above 1, always.
-##
-## Two stream names, so the game's number 5 and this spawner's fifth spawn are different
-## seeds: a game that answers [member seed_source] for some NPCs and not others would
-## otherwise hand two of them one seed.
+## Two stream names, so the game's number 5 and this spawner's fifth spawn are different seeds
+## when seed_source answers for some NPCs and not others.
 func seed_for(subject: int, from_game: bool = false) -> int:
 	var stream := DotRandomStream.new(seed_base).stream_for(
 		&"npc_id" if from_game else &"npc", subject
@@ -801,9 +702,7 @@ func _seed_npc(npc: DotNpcInstance) -> int:
 
 
 ## Spawns up to [param count] of one kind around [param at]. Returns what was made.
-##
-## Capped by [member DotNpcLimits.burst_cap], which is the difference between a
-## director asking for a wave and a bug asking for ten thousand.
+## Capped by [member DotNpcLimits.burst_cap]: a director asking for a wave versus a bug asking for ten thousand.
 func spawn_group(
 	npc_id: StringName,
 	at: Vector3,
@@ -815,10 +714,8 @@ func spawn_group(
 	var wanted := count if limits == null else mini(count, limits.burst_cap)
 
 	for i in wanted:
-		# A deterministic ring rather than random jitter. Two servers replaying the
-		# same director decisions then place a wave identically, which is what makes a
-		# horde reproducible in a suite — and randomness here would buy nothing a
-		# player could see.
+				# A deterministic ring, not random jitter: two servers replaying the same decisions place a
+				# wave identically, which makes a horde reproducible in a suite.
 		var angle := TAU * float(i) / float(maxi(wanted, 1))
 		var offset := Vector3(cos(angle), 0.0, sin(angle)) * spread
 		var made := spawn_2d(npc_id, DotNpcInstance.from_plane(at + offset), owner_id) \
@@ -863,32 +760,21 @@ func may_spawn(def: DotNpcDef, owner_id: StringName = &"") -> DotResult:
 
 
 ## Where an NPC asked for at [param at] would actually stand.
-##
-## Separated from [method spawn] so a director can ask before it commits — a wave that
-## found only three legal positions out of eight should spawn three rather than eight
-## in a wall.
+## Separate from [method spawn] so a director can ask first: a wave with three legal positions of eight
+## should spawn three, not eight in a wall.
 func place(at: Vector3) -> DotResult:
 	if limits == null or not limits.require_navigable_spawn:
 		return DotResult.success(at)
 
 	if not has_nav():
-		# No navigation is not the same as "off the navigation".
-		#
-		# A game that paths its own way — a flat arena, a 2D game, one using Godot's
-		# NavigationServer — has no DotNpcNavData and every spawn point in it is legal.
-		# Refusing here would make `require_navigable_spawn` mean "refuse every spawn
-		# on a map with no nav data", which is a server with no NPCs at all and a
-		# setting that reads as though it should be on.
+				# No navigation is not "off the navigation": a game that paths its own way has no DotNpcNavData and
+				# every spawn point is legal. Refusing would make `require_navigable_spawn` mean "refuse every
+				# spawn on a map with no nav data".
 		return DotResult.success(at)
 
-	# Asked for the INDEX, not for the snapped position.
-	#
-	# `snap()` returns the point it was handed when there is nothing within the
-	# radius, which is the right answer for a caller nudging a position and exactly
-	# the wrong one for a caller deciding whether a spawn is legal: the distance from
-	# a point to itself is zero, so a spawn two hundred metres off the graph measured
-	# as perfect. The first version of this did that, and the check that caught it is
-	# the one that spawns something in the middle of nowhere.
+		# Asked for the INDEX, not the snapped position: `snap()` returns its input when nothing is within
+		# the radius, and the distance from a point to itself is zero, so a spawn two hundred metres off
+		# the graph measured as perfect.
 	var index := nav.data.nearest_point(at, limits.spawn_snap_radius)
 
 	if index < 0:
@@ -902,9 +788,7 @@ func place(at: Vector3) -> DotResult:
 
 
 ## Builds and attaches the brain named by the definition.
-##
-## Loaded by path, for the reason in [DotNpcBrain]: a `class_name` cannot be resolved
-## inside a mounted pack.
+## Loaded by path, as in [DotNpcBrain]: a class_name cannot be resolved inside a mounted pack.
 func attach_brain(npc: DotNpcInstance) -> DotResult:
 	if npc == null or npc.def == null:
 		return DotResult.fail(DotError.CODE_INVALID, "No NPC to give a brain to.")
@@ -946,15 +830,10 @@ func _refuse(owner_id: StringName, npc_id: StringName, reason: String) -> void:
 	refused.emit(owner_id, npc_id, reason)
 
 
-# --- Damage -------------------------------------------------------------------
 
 ## Hurts an NPC. Returns how much health it actually lost.
-##
-## [b]Health is handled here when dot-combat is absent and handed to it when it is
-## present[/b] — but this addon does not import dot-combat and never will, for the
-## family's reason. A game with dot-combat gives its NPC scene a health component and
-## calls [method report_death] from it; a game without one calls this. Both end at the
-## same [signal died], which is what lets a scoring layer be written once.
+## Handled here when dot-combat is absent; a game with dot-combat calls [method report_death] from its health
+## component instead. Both end at the same [signal died], so scoring is written once.
 func damage(instance_id: int, amount: float, by: StringName = &"") -> float:
 	if not authoritative or amount <= 0.0:
 		return 0.0
@@ -967,19 +846,12 @@ func damage(instance_id: int, amount: float, by: StringName = &"") -> float:
 	var before := npc.health
 	npc.health = maxf(npc.health - amount, 0.0)
 
-	# Being hurt is being engaged, whoever did it and from wherever.
-	#
-	# Without this an NPC shot from beyond its sight range is a reclaim candidate while
-	# somebody is actively killing it, and the player watches their target vanish.
+		# Being hurt is being engaged, from wherever: otherwise an NPC shot from beyond its sight range
+		# is a reclaim candidate while being killed.
 	npc.engaged_at = _now
 
-	# The brain is told before the signal, and it is told at all.
-	#
-	# `DotNpcBrain._npc_damaged` was declared, documented and called by nothing in the
-	# first version of this file — the family's most repeated bug, in a new addon,
-	# caught by the suite asserting the hook rather than the signal. A hook nothing
-	# fires is a game whose NPCs never flinch, never call for help and never flee, with
-	# no error anywhere.
+		# The brain is told before the signal, and at all: `DotNpcBrain._npc_damaged` was once declared and
+		# called by nothing, so NPCs never flinched, called for help or fled, with no error anywhere.
 	if npc.brain != null:
 		(npc.brain as DotNpcBrain).damaged(before - npc.health, by)
 
@@ -1025,7 +897,6 @@ func heal(instance_id: int, amount: float) -> float:
 	return npc.health - before
 
 
-# --- Removing -----------------------------------------------------------------
 
 func remove(instance_id: int, reason: StringName = REASON_ADMIN) -> bool:
 	if not authoritative:
@@ -1051,16 +922,12 @@ func remove(instance_id: int, reason: StringName = REASON_ADMIN) -> bool:
 	if _by_owner.has(npc.owner_id):
 		(_by_owner[npc.owner_id] as Array).erase(instance_id)
 
-	# Announced BEFORE the node is freed, so a listener holding a reference — a
-	# netcode replicating it, a director counting its wave — can let go while it still
-	# exists. Freeing first leaves every one of them with a freed object and a null
-	# check they did not know they needed.
+		# Announced BEFORE the node is freed, so a listener holding a reference (netcode, a wave counter)
+		# lets go while it still exists.
 	removed.emit(npc, reason)
 
-	# Marked dead immediately, which is not the same as freeing the node. queue_free()
-	# is deferred, so `is_instance_valid` stays true for the rest of the frame — and a
-	# director that checked only the node would keep a reclaimed NPC against its budget
-	# for as long as that frame lasts.
+		# Marked dead immediately, not at free: queue_free() is deferred, so `is_instance_valid` stays true
+		# and a reclaimed NPC would keep counting against the budget for the rest of the frame.
 	npc.alive = false
 	_unbind(npc)
 
@@ -1071,11 +938,8 @@ func remove(instance_id: int, reason: StringName = REASON_ADMIN) -> bool:
 
 
 ## Breaks the NPC <-> brain cycle. See [method DotNpcBrain.unbind].
-##
-## Called from [method remove] and when this spawner is freed. Clearing only `npc.brain`
-## — which is what [method remove] did — reads exactly like the fix and is not one: the
-## brain's own context points back at the brain, and nothing ever called remove on the
-## path that leaks hardest.
+## Called from [method remove] and when this spawner is freed. Clearing only `npc.brain` is not the fix:
+## the brain's own context points back at the brain.
 func _unbind(npc: DotNpcInstance) -> void:
 	if npc == null:
 		return
@@ -1087,10 +951,7 @@ func _unbind(npc: DotNpcInstance) -> void:
 
 
 ## Everything still bound when the spawner goes away.
-##
-## PREDELETE rather than `_exit_tree`: a spawner taken out of the tree and put back —
-## a world reparented during a map change — must keep its NPCs thinking. Only a spawner
-## that is actually being freed has NPCs nobody will ever remove.
+## PREDELETE, not `_exit_tree`: a spawner reparented during a map change must keep its NPCs thinking.
 func _notification(what: int) -> void:
 	if what != NOTIFICATION_PREDELETE:
 		return
@@ -1124,14 +985,9 @@ func clear_owner(owner_id: StringName, reason: StringName = REASON_CLEANUP) -> i
 	return count
 
 
-## Loads every catalogue kind's scene and brain script now, and holds them. Returns how many
-## resources were loaded.
-##
-## [b]A kind's first spawn compiles its brain[/b] (and the scripts it extends): measured at
-## 30 ms a kind in game-zombie-zone, a hitch the first time each special came in a hold. A host
-## calls this while a map loads, where a second is expected. Loaded or not, what a spawn loads
-## is held from then on: a resource nothing references is freed, so a kind whose last NPC died
-## was compiled again on its next spawn.
+## Loads every catalogue kind's scene and brain script now, and holds them. Returns how many resources were loaded.
+## A kind's first spawn compiles its brain (30 ms a kind in a measured game), a hitch a host avoids by calling
+## this while a map loads. Held, because a resource nothing references is freed and recompiled on the next spawn.
 func warm() -> int:
 	var count := 0
 
@@ -1189,7 +1045,6 @@ func owner_left(owner_id: StringName) -> int:
 	return clear_owner(owner_id, REASON_LEFT)
 
 
-# --- Queries ------------------------------------------------------------------
 
 func get_npc(instance_id: int) -> DotNpcInstance:
 	var found: Variant = _npcs.get(instance_id)

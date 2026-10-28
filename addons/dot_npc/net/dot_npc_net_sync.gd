@@ -2,43 +2,8 @@ class_name DotNpcNetSync
 extends RefCounted
 
 ## What an NPC has to tell every client, and how to get it there.
-##
-## [b]dot-net is not a dependency and is not imported here.[/b] Only dot-core is a hard
-## dependency in this family, and a script that [i]mentions[/i] a [code]class_name[/code]
-## the project does not have fails to parse — taking every script that references it
-## down with it. Types are named as strings and a bridge resolves them with
-## [code]DotNetVar.Type[spec.type][/code], exactly as [code]DotMatchNetSync[/code] and
-## [code]DotCombatNetSync[/code] do.
-##
-## [b]Everything here is interpolated and nothing is predicted.[/b] An NPC's position
-## comes out of a pathfinder, a steering pass and — for a rigid body — a solver, none of
-## which is reproducible across machines, so a client that predicted one would be
-## corrected every snapshot. It receives, it interpolates, it draws. That costs the
-## rendering a snapshot's worth of lag and buys a horde that does not jitter.
-##
-## [codeblock]
-## class_name ZombieNet extends DotNetBehaviour
-##
-## var net_x: float
-## var net_y: float
-## var net_z: float
-## var net_yaw: float
-## var net_health: int
-## var net_state: int
-##
-## func _register_net_vars() -> void:
-##     for spec in DotNpcNetSync.specs():
-##         var declaration := replicate(spec.property, DotNetVar.Type[spec.type])
-##         if spec.bits > 0:
-##             declaration.bits(spec.bits)
-##         if spec.interpolated:
-##             declaration.interpolated()
-## [/codeblock]
-##
-## [b]Health is a percentage, not the number.[/b] A client draws a health bar and
-## nothing else; sending the real figure costs bits per NPC per snapshot for a
-## precision no player can see, and at ninety NPCs that is the difference between a
-## snapshot that fits in a packet and one that does not.
+## dot-net is not imported (a script naming a missing class_name fails to parse): types are strings a bridge
+## resolves with `DotNetVar.Type[spec.type]`. All interpolated, nothing predicted. Health is a percentage.
 
 ## Health as 0-100. Seven bits, because a client only ever draws a bar with it.
 const HEALTH_BITS := 7
@@ -74,11 +39,9 @@ static func limb_specs() -> Array[Dictionary]:
 
 static func specs() -> Array[Dictionary]:
 	return [
-		# Position as three floats rather than a packed vector, because dot-net
-		# quantises per property and a game's world extent is its own: an arena 128 m
-		# across and one 4 km across want different bit counts, and one packed type
-		# would force the larger on both. The bridge sets the range; this says what
-		# the fields are.
+				# Position as three floats, not a packed vector: dot-net quantises per property and a game's
+				# world extent is its own, so one packed type would force the larger bit count on both.
+				# The bridge sets the range.
 		{"property": &"net_x", "type": "FLOAT", "bits": 0, "interpolated": true},
 		{"property": &"net_y", "type": "FLOAT", "bits": 0, "interpolated": true},
 		{"property": &"net_z", "type": "FLOAT", "bits": 0, "interpolated": true},
@@ -108,9 +71,7 @@ static func properties() -> Array[StringName]:
 
 
 ## Copies an NPC's state onto a replicating object.
-##
-## [param state] is the game's, not this addon's: dot-npc does not know whether an NPC
-## is mid-swing, because attacking is [code]dot-npc-ai[/code]'s business or the game's.
+## [param state] is the game's: dot-npc does not know whether an NPC is mid-swing.
 static func pull(npc: DotNpcInstance, into: Object, state: int = State.IDLE) -> void:
 	if npc == null or into == null:
 		return
@@ -126,14 +87,8 @@ static func pull(npc: DotNpcInstance, into: Object, state: int = State.IDLE) -> 
 
 
 ## Writes replicated state onto a mirroring node. The client half of [method pull].
-##
-## [b]Never call this on an NPC this peer is the authority for.[/b] The rule
-## `_net_state_applied` broke three times in this family: writing a received position
-## onto something the local machine is simulating makes the measured correction the
-## whole replay distance. NPCs are not predicted, so on a client every NPC is a mirror
-## and this is always right there — which is exactly why it is worth saying, because
-## the one machine where it is wrong is the server, and a bridge that ran one code path
-## for both would do it.
+## Never call this on an NPC this peer is the authority for: writing a received position onto
+## something simulated locally makes the measured correction the whole replay distance. Right on every client, wrong on the server.
 static func apply(node: Node3D, from: Object) -> void:
 	if node == null or from == null:
 		return
@@ -154,20 +109,16 @@ static func yaw_of(npc: DotNpcInstance) -> float:
 
 	var facing := npc.facing()
 
-	# The node's own `rotation.y`, which is what [method apply] writes back. Facing is -Z,
-	# so a yaw of θ faces (-sin θ, 0, -cos θ) and θ is atan2 of the NEGATED facing. This
-	# was `atan2(facing.x, facing.z)` — half a turn out — and it hid
-	# `DotNpcBrain.face` being half a turn out the other way.
+		# The node's own `rotation.y`, which [method apply] writes back. Facing is -Z, so a yaw of θ faces
+		# (-sin θ, 0, -cos θ) and θ is atan2 of the NEGATED facing; `atan2(facing.x, facing.z)` is half a turn out.
 	return fposmod(atan2(-facing.x, -facing.z), TAU)
 
 
 static func quantise_yaw(yaw: float) -> int:
 	var steps := 1 << YAW_BITS
 
-	# `fposmod` before the multiply, because a yaw of exactly TAU would otherwise
-	# quantise to `steps` — one past the largest value the field can hold, which
-	# dot-net's writer would truncate to 0 and put a body facing backwards once per
-	# turn. A wrap that only fires at one angle is the kind nobody reproduces.
+		# `fposmod` before the multiply: a yaw of exactly TAU would quantise to `steps`, one past the
+		# field's largest value, which dot-net's writer truncates to 0 and turns the body backwards once per turn.
 	return int(fposmod(yaw, TAU) / TAU * float(steps)) % steps
 
 
@@ -176,10 +127,7 @@ static func dequantise_yaw(value: int) -> float:
 
 
 ## Health as 0-100, rounded up so a live NPC never reads as 0.
-##
-## [b]Up rather than to nearest, and it matters.[/b] An NPC on 0.4% of its health is
-## alive, and a client drawing "0" over something that is still swinging at a player is
-## a client telling them a lie they will act on.
+## Up, not to nearest: a client drawing "0" over something still swinging at a player lies to them.
 static func quantise_health(npc: DotNpcInstance) -> int:
 	if npc == null or npc.def == null or npc.def.max_health <= 0.0:
 		return 0

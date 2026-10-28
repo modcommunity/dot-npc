@@ -2,10 +2,7 @@
 extends EditorPlugin
 
 ## Editor entry point for dot-npc. Registers inspector types only.
-##
-## No autoloads. A server running two worlds in one process — which is what a
-## dedicated server switching games under live players is for one tick — holds two
-## spawners, each with its own population budget.
+## No autoloads: a server running two worlds in one process holds two spawners, each with its own budget.
 
 const _ICON := "res://addons/dot_npc/icon_placeholder.svg"
 

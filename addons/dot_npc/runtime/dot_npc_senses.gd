@@ -1,17 +1,9 @@
 class_name DotNpcSenses
 extends RefCounted
 
-## What an NPC can perceive, and what it has committed to chasing.
-##
-## [b]Commitment with hysteresis is the whole point of this class.[/b] "Nearest
-## visible enemy" recomputed every tick is the classic broken NPC: two players a
-## metre apart make it turn back and forth for ever, and one who steps behind a pillar
-## makes it forget instantly and walk away mid-swing. So a target is acquired at one
-## threshold and dropped at a weaker one, and dropping is delayed by a grace period
-## measured from the last sighting rather than from acquisition.
-##
-## Candidates are supplied by the game as plain data — an id, a position, a faction
-## and a loudness — so this never mentions dot-combat, dot-net or a player class.
+## What an NPC can perceive, and what it has committed to chasing, with hysteresis: "nearest visible enemy" every
+## tick flips between two close players, so a target is acquired at one threshold and dropped at a weaker one after a grace.
+## Candidates are plain data (id, position, faction, loudness), so this never mentions combat, net or a player class.
 
 ## A perception candidate. Built by the game, not by this addon.
 class Candidate:
@@ -21,10 +13,8 @@ class Candidate:
 	var position: Vector3 = Vector3.ZERO
 	var faction: StringName = &""
 
-	## How loud it is right now, in metres of audibility. 0 is silent.
-	##
-	## A radius rather than a decibel level, because that is the number a game already
-	## has: a sprinting player is heard further than a crouching one.
+		## How loud it is right now, in metres of audibility. 0 is silent.
+		## A radius, because that is what a game already has: a sprinter is heard further than a crouching player.
 	var loudness: float = 0.0
 
 	func _init(p_id: StringName = &"", p_pos: Vector3 = Vector3.ZERO,
@@ -36,16 +26,11 @@ class Candidate:
 
 
 ## How much closer a rival must be before an NPC will switch to it. 1.0 = no stickiness.
-##
-## The acquire/drop asymmetry. At 0.6 a new candidate must be 40% nearer than the
-## committed one, which is far enough that two players standing together cannot
-## make it oscillate.
+## The acquire/drop asymmetry: at 0.6 a rival must be 40% nearer, so two players together cannot make it oscillate.
 var switch_ratio: float = 0.6
 
 ## Seconds an NPC keeps chasing a target it can no longer perceive.
-##
-## Measured from the last sighting. Without it, a doorway is a perfect escape and the
-## NPC turns away while still in swinging range.
+## Measured from the last sighting; without it a doorway is a perfect escape.
 var commitment_grace: float = 3.0
 
 ## Set false to skip line-of-sight raycasts wholesale, whatever the definition says.
@@ -64,9 +49,7 @@ var _ray := PhysicsRayQueryParameters3D.new()
 
 
 ## Whether [param npc] can perceive [param cand] right now, ignoring commitment.
-##
-## Sight is range + cone + optional occlusion; hearing is range only and ignores
-## facing, which is what stops an NPC having a perfect blind spot behind it.
+## Sight is range + cone + optional occlusion; hearing is range only, so there is no perfect blind spot behind.
 func perceives(npc: DotNpcInstance, cand: Candidate) -> bool:
 	if npc == null or cand == null or not npc.is_alive() or npc.def == null:
 		return false
@@ -106,11 +89,8 @@ func _perceives_at(npc: DotNpcInstance, cand: Candidate, to_target: Vector3) -> 
 
 func _has_line_of_sight(npc: DotNpcInstance, cand: Candidate) -> bool:
 	if not (npc.node is Node3D):
-		# [b]A 2D NPC has no 3D physics world to cast through, and answering "blocked"
-		# would blind it permanently.[/b] A 2D game that wants occlusion sets
-		# `line_of_sight` false on the definition and does the test itself, which is what
-		# the flag is for; what must not happen is this returning false and every NPC in
-		# the game standing still with nothing in the log.
+				# A 2D NPC has no 3D physics world to cast through, and "blocked" would blind it permanently.
+				# A 2D game wanting occlusion sets `line_of_sight` false on the definition and tests itself.
 		return true
 
 	var world := (npc.node as Node3D).get_world_3d()
@@ -138,9 +118,8 @@ func _has_line_of_sight(npc: DotNpcInstance, cand: Candidate) -> bool:
 
 
 ## Picks or keeps a target for [param npc]. Returns its id, or empty for none.
-##
-## [param now] is simulated seconds, never a wall clock. Candidates within reach (sight or
-## hearing) are tested nearest first, at most [param candidate_cap], plus the committed one.
+## [param now] is simulated seconds. Candidates within reach are tested nearest first, at most
+## [param candidate_cap], plus the committed one.
 func update_target(npc: DotNpcInstance, candidates: Array, now: float,
 		candidate_cap: int = 32) -> StringName:
 	if npc == null or not npc.is_alive() or npc.def == null:
@@ -323,11 +302,8 @@ func decide(npc: DotNpcInstance, candidates: Array, order: PackedInt32Array, hel
 		# expires — but a perceived rival ends it immediately, because an NPC that
 		# ignored the player hitting it to chase one that left is worse than either.
 		if best != null:
-			# A different rival, so the commitment is new — and a reaction time has to
-			# start again. Guarded on the id rather than assigned unconditionally,
-			# because re-perceiving the SAME target after a gap is not a new commitment
-			# and restarting the clock there would be an NPC that never finishes reacting
-			# to somebody who keeps stepping behind a pillar.
+						# A different rival is a new commitment and the reaction time restarts. Guarded on the id:
+						# re-perceiving the SAME target after a gap would otherwise restart the clock for ever.
 			if npc.target_id != best.id:
 				npc.target_since = now
 

@@ -1,13 +1,9 @@
 class_name DotNpcHover
 extends RefCounted
 
-## A jetpack's flight as a state machine that wants a velocity: lift, cruise to a goal, hover over
-## it, land when the fuel runs low, regain fuel on the ground. Holds no node and moves nothing;
-## the body moves itself at the velocity [method step] returns and reports the ground below.
-##
-## [b]It does not path.[/b] It flies straight at the goal at [member cruise_height] over the
-## ground the caller measures under it, so a goal across a wall wants the caller to pick the next
-## goal (a point above the wall) rather than this to search.
+## A jetpack's flight as a state machine that wants a velocity: lift, cruise, hover, land when fuel is low,
+## regain fuel on the ground. Holds no node; the body moves itself at the velocity [method step] returns.
+## It does not path: it flies straight at the goal, so a goal across a wall wants the caller to pick a point above it.
 
 enum State { GROUNDED, LIFT, CRUISE, HOVER, LAND, DISABLED }
 

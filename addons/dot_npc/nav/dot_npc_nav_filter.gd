@@ -1,32 +1,9 @@
 class_name DotNpcNavFilter
 extends RefCounted
 
-## Which parts of the graph one NPC may use, and what they cost it.
-##
-## Detour's [code]dtQueryFilter[/code], in the shape a point graph needs. Two ideas,
-## both of which a navmesh needs and a plain A* does not have:
-##
-## [b]Areas cost different amounts.[/b] A path across water, through fire or over a
-## catwalk is passable and undesirable, and the only way to say "go round unless going
-## round is much worse" is to make the crossing cost more. A hard ban cannot express
-## it: an NPC that will never step in water is one that stands at the edge of a puddle
-## for ever when the puddle is the only way through.
-##
-## [b]Flags decide what is passable at all.[/b] A crouching corridor is impassable to
-## something that cannot crouch; a door is impassable to something that cannot open
-## one. That is per-NPC, not per-map, so it belongs on the query rather than in the
-## data.
-##
-## [codeblock]
-## var filter := DotNpcNavFilter.new()
-## filter.set_area_cost(DotNpcNavData.AREA_WATER, 6.0)   # wade only if you must
-## filter.exclude_flags = DotNpcNavData.Flag.CROUCH      # this one cannot crouch
-## graph.filter = filter
-## [/codeblock]
-##
-## [b]A filter is a property of the asker, not of the graph.[/b] One graph serves
-## every NPC on the map and they do not agree about it — which is why this is a
-## separate object a caller hands in, rather than fields on [DotNpcNavData].
+## Which parts of the graph one NPC may use, and what they cost it. Detour's `dtQueryFilter` for a point graph.
+## Areas cost different amounts (a hard ban strands an NPC at a puddle that is the only way through);
+## flags decide what is passable at all. A property of the asker, so an object a caller hands in, not fields on [DotNpcNavData].
 
 # No log channel: a value object of costs and flags. It cannot fail against anything.
 
@@ -38,20 +15,14 @@ const MAX_AREAS := 16
 var area_costs: PackedFloat32Array = PackedFloat32Array()
 
 ## A point must carry at least one of these flags, unless this is 0.
-##
-## Zero means "no requirement", not "nothing passes". The opposite reading is the
-## trap: a filter constructed and never configured would then refuse the whole map,
-## and the symptom is an NPC that never moves with nothing erroring.
+## Zero means "no requirement", not "nothing passes": the opposite would make a never-configured filter refuse the whole map.
 var include_flags: int = 0
 
 ## A point carrying any of these flags is impassable.
 var exclude_flags: int = 0
 
 ## Cost multiplier applied to any point flagged [constant DotNpcNavData.Flag.AVOID].
-##
-## Separate from the area table because AVOID is a property of the [i]place[/i] rather
-## than of what it is made of — Source marks it on a nav area — and a game should be
-## able to say "avoid this ledge" without spending an area id on it.
+## Separate from the area table: AVOID is a property of the place, and needs no area id.
 var avoid_cost: float = 4.0
 
 
@@ -107,11 +78,7 @@ func cost_multiplier(area: int, flags: int) -> float:
 
 
 ## Whether this filter would change any answer. Lets the graph skip the whole lookup.
-##
-## [b]Worth having and easy to get wrong.[/b] The check is not "was anything set" but
-## "is anything different from the default", because a caller that set an area cost
-## back to 1.0 has a filter that costs a dictionary lookup per edge and changes
-## nothing.
+## Tests for "different from the default", not "was set": an area cost set back to 1.0 changes nothing.
 func is_neutral() -> bool:
 	if include_flags != 0 or exclude_flags != 0:
 		return false

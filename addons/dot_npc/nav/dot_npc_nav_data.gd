@@ -3,69 +3,30 @@ class_name DotNpcNavData
 extends Resource
 
 ## Where an NPC may stand, shipped beside the map it was generated from.
-##
-## [b]This is the navigation decision, and it is not a free one.[/b] Godot's own
-## answer is [code]NavigationRegion3D[/code] baking a [code]NavigationMesh[/code] from
-## source geometry at edit time. That is the right default for a game whose maps are
-## authored in a scene — and this family's are not. Every map here is built in code
-## from constants ([code]G2GGeometry[/code], [code]PlaygroundGeometry[/code],
-## [code]ArenaMap[/code]), so at edit time there is no geometry to bake: the scene is
-## an empty node with a script.
-##
-## So navigation follows dot-timer's zones exactly: generate it from [i]the same
-## constants the geometry was built from[/i], with a [code]tools/export_nav.gd[/code]
-## in the game, ship the result beside the map, and fail the suite when it was not
-## re-run. A navmesh that has drifted from the geometry it was drawn against is an NPC
-## walking through a wall, and it is invisible until somebody watches one do it.
-##
-## [b]That decision is what makes a delivered map able to have NPCs at all.[/b] A map
-## arriving in a mounted dot-cloud pack cannot be baked on the client — there is no
-## editor there — so the nav data has to be content, in the pack, like the zones.
-##
-## What comes out of that derivation is a graph of points rather than a polygon soup,
-## because a code-built map knows its own connectivity — it built the floors — and
-## deriving a graph from that is exact where re-deriving it from triangles is a guess.
-## [DotNpcNavBuilder] generates it and [DotNpcNavGraph] searches it.
-##
-## [b]That is also why this is not a [code]NavigationMesh[/code].[/b] Godot's navigation
-## wants polygons, and turning a point grid back into polygons in order to hand it to a
-## server that would re-derive a graph from them is two lossy conversions to arrive
-## where we started. A game with authored geometry should use
-## [code]NavigationRegion3D[/code] and stock [code]NavigationAgent3D[/code]s instead,
-## and nothing in dot-npc stops it: a [DotNpcSpawner] with no nav data spawns anywhere
-## and a brain that owns an agent paths with that.
+## A point graph generated from the map's own constants (`tools/export_nav.gd`), not a baked NavigationMesh:
+## code-built maps have nothing to bake. A game with authored geometry should use NavigationRegion3D.
 
 # No log channel: the document the exporter writes. validate() returns a DotResult and
 # the spawner that adopts it logs the outcome with the map in hand.
 
-## Bumped when the on-disk shape changes, and whenever [DotNpcNavBuilder] logic changes what
-## it builds from the same inputs (the digest hashes constants only, so a cache built by an
-## older builder would otherwise be reused as fresh). A stale cache is rebuilt, not an error.
-##
-## 2 added per-point areas and flags and the cover list. A version 1 document still
-## loads: the arrays are absent, every point is area 0 with no flags, and there is no
-## cover — which is exactly what a graph generated before any of it existed described.
-## 3 retired caches built while the edge sampler rounded up and dropped walkable edges.
+## Bumped when the on-disk shape or what [DotNpcNavBuilder] builds from the same inputs changes
+## (the digest hashes constants only, so an older builder's cache would pass as fresh). A stale cache is rebuilt.
+## 2 added per-point areas, flags and cover (version 1 loads as area 0, no flags, no cover); 3 retired caches that dropped walkable edges.
 const FORMAT_VERSION := 3
 
 const CHANNEL := "npc.nav.data"
 
 ## What a point is made of. An id, not a meaning: [DotNpcNavFilter] gives it a cost
-## and a game decides what its own ids stand for.
-##
-## The four named here are the ones every map has had, and a generator is free to use
-## any id up to [constant DotNpcNavFilter.MAX_AREAS].
+## and a game decides what its own ids stand for. A generator may use any id up to
+## [constant DotNpcNavFilter.MAX_AREAS].
 const AREA_GROUND := 0
 const AREA_WATER := 1
 const AREA_HAZARD := 2
 const AREA_DOOR := 3
 
 ## Per-point properties, as bits.
-##
-## The nav-mesh attributes twenty years of shipped practice settled on, minus the ones
-## that belong to one round-based shooter. They are on the point rather than on the
-## edge because a code-built map knows what a floor tile is; an edge between two of
-## them inherits the worse of the two.
+## On the point, not the edge, because a code-built map knows what a floor tile is; an edge
+## inherits the worse of its two points.
 enum Flag {
 	NONE = 0,
 	CROUCH = 1 << 0,   ## Must crouch to be here.
@@ -88,66 +49,41 @@ enum Cover {
 @export var map_id: StringName = &""
 
 ## A digest of the constants the geometry was built from.
-##
-## [b]The staleness check, and the whole reason this resource is safe to ship.[/b] The
-## generator writes the digest of the map's own constants; a loader compares it with
-## the digest of the constants it actually has. They differ exactly when somebody
-## moved a wall and did not re-run the generator — which is the failure dot-timer's
-## zones already have a suite check for, for the same reason.
+## The staleness check that makes shipping this safe: it differs exactly when a wall moved and
+## the generator was not re-run.
 @export var source_digest: String = ""
 
 ## Walkable points, in the map's world space.
 @export var points: PackedVector3Array = PackedVector3Array()
 
 ## Undirected edges as index pairs into [member points]. Flat: [i0, j0, i1, j1, ...].
-##
-## A point graph rather than a polygon soup, because a code-built map knows its own
-## connectivity — it built the floors — and deriving a graph from that is exact where
-## re-deriving it from triangles is a guess.
+## A graph, not a polygon soup: a code-built map knows its own connectivity, so deriving it is exact.
 @export var edges: PackedInt32Array = PackedInt32Array()
 
 ## How far off a point an NPC may still be considered on the mesh, in metres.
 @export_range(0.1, 20.0, 0.1) var point_radius: float = 2.0
 
 ## The generator's grid step, in metres. 0 means "not recorded".
-##
-## [b]Written down rather than inferred, because two things need it and neither can
-## guess.[/b] A straight-line walkability test has to sample at less than half a cell
-## or it steps clean over one, and [member point_radius] is not that number: it is how
-## far off the mesh an NPC may stand, which a generator is free to set to anything.
-## Version 1 documents do not have it and fall back to [member point_radius], which is
-## what every generator so far has set it to anyway.
+## Written down, not inferred: a walkability test must sample at under half a cell, and
+## [member point_radius] is not that number. Version 1 documents fall back to it.
 @export_range(0.0, 20.0, 0.1) var grid_spacing: float = 0.0
 
-## Area id per point, parallel to [member points]. Shorter than it is treated as all
-## [constant AREA_GROUND].
-##
-## [b]Parallel arrays rather than an array of structures.[/b] A per-point Dictionary
-## would be three allocations per point and this is content that ships with a map; a
-## `PackedInt32Array` is four bytes. The cost is that they can fall out of step, which
-## is why [method validate] checks the lengths and [method add_point] is the only
-## thing that appends.
+## Area id per point, parallel to [member points]. Shorter than it is treated as all [constant AREA_GROUND].
+## Parallel arrays, not per-point Dictionaries: this ships with a map. They can fall out of step,
+## so [method validate] checks lengths and [method add_point] is the only appender.
 @export var areas: PackedInt32Array = PackedInt32Array()
 
 ## Flag bits per point, parallel to [member points]. See [enum Flag].
 @export var flags: PackedInt32Array = PackedInt32Array()
 
 ## Places worth standing in a fight, in world space.
-##
-## Source keeps hiding spots as their own list rather than as an attribute of an area,
-## because a spot is a point and an area is a rectangle — and the useful spot is the
-## corner of the rectangle, not its middle. Same here: a cover spot is not a graph
-## point, and an NPC going to one paths to the nearest graph point and then steps to
-## the spot.
+## A list apart from areas: a spot is a point and the useful one is a rectangle's corner. A cover
+## spot is not a graph point; an NPC paths to the nearest graph point, then steps to it.
 @export var cover_positions: PackedVector3Array = PackedVector3Array()
 
 ## For each cover spot, the direction the thing giving cover lies in.
-##
-## [b]This is what makes cover answerable without geometry.[/b] Nothing at runtime can
-## raycast a map that was built from constants and shipped as a graph, so "am I in
-## cover from that" cannot be computed then. The generator knows — it placed the
-## obstacle — so it records which way the wall is, and the runtime question becomes a
-## dot product.
+## Makes cover answerable without geometry: nothing can raycast a map shipped as a graph, but the
+## generator placed the obstacle, so the runtime question is a dot product.
 @export var cover_normals: PackedVector3Array = PackedVector3Array()
 
 ## [enum Cover] bits per cover spot.
@@ -165,10 +101,8 @@ static func digest_of(constants: Array) -> String:
 		# a wall moved by a centimetre would then hash the same as one that was not.
 		parts.append(var_to_str(value))
 
-	# Joined with a separator rather than concatenated. Without one, [1.0, 23.0] and
-	# [12.0, 3.0] hash to different strings only by luck of the decimal point, and two
-	# different maps sharing a digest is a stale navmesh that reports itself fresh —
-	# the one failure this whole mechanism exists to catch.
+	# Joined with a separator: without one [1.0, 23.0] and [12.0, 3.0] can collide, and two maps
+	# sharing a digest is a stale navmesh reporting itself fresh.
 	return "|".join(parts).sha256_text().substr(0, 16)
 
 
@@ -224,10 +158,8 @@ func add_flags(index: int, point_flags: int) -> void:
 
 
 ## Brings the parallel arrays up to the point count.
-##
-## For a generator that appended to [member points] directly, and for a version 1
-## document being upgraded. Called by [method validate] rather than left to a caller,
-## because a short array is not a document a caller can be expected to notice.
+## For a generator that appended to [member points] directly and for upgrading version 1;
+## [method validate] calls it because a short array is not something a caller will notice.
 func normalise_arrays() -> void:
 	while areas.size() < points.size():
 		areas.append(AREA_GROUND)
@@ -256,14 +188,8 @@ func connect_points(a: int, b: int) -> DotResult:
 
 
 ## The nearest walkable point to [param p], or -1 when none is within [param radius].
-##
-## [b]Through a bucket index, not a scan of every point.[/b] Every path request asks this
-## twice and every straight-line walkability test asks it once per sample, so on a map of
-## a few thousand points the linear scan this used to be was most of a server's tick with
-## forty NPCs repathing. The answer is the same one the scan gave, ties included: the
-## lowest index wins at an equal distance, because a follower that snapped to a different
-## one of two equidistant points depending on how the index was laid out would path
-## differently on two machines.
+## Through a bucket index, not a scan: every path request and walkability sample asks this. Ties
+## go to the lowest index, so two machines never path differently depending on index layout.
 func nearest_point(p: Vector3, radius: float = -1.0) -> int:
 	return nearest_point_where(p, radius, Callable())
 
@@ -390,7 +316,6 @@ func snap(p: Vector3, radius: float = -1.0) -> Vector3:
 	return points[i] if i >= 0 else p
 
 
-# --- Cover ------------------------------------------------------------------
 
 func cover_count() -> int:
 	return cover_positions.size()
@@ -401,10 +326,8 @@ func add_cover(
 	position: Vector3, normal: Vector3, spot_flags: int = Cover.IN_COVER
 ) -> int:
 	cover_positions.append(position)
-	# Normalised on the way in, because every query is a dot product against it and a
-	# generator that passed a difference of two positions rather than a direction would
-	# scale every comparison by the distance between them — which is not an error, just
-	# a threshold that means something different per spot.
+		# Normalised on the way in: every query is a dot product against it, and a non-unit normal
+		# would scale every comparison by distance.
 	cover_normals.append(normal.normalized() if normal.length_squared() > 0.0 else Vector3.FORWARD)
 	cover_flags.append(spot_flags)
 	return cover_positions.size() - 1
@@ -417,14 +340,8 @@ func cover_flags_of(index: int) -> int:
 
 
 ## The best place to stand near [param near] that is covered from [param threat].
-##
-## Returns the index, or -1. "Covered from" is the dot product between the spot's
-## recorded normal and the direction to the threat: a spot whose wall is between it
-## and the threat scores 1, one whose wall is behind it scores -1.
-##
-## [b]Scored rather than filtered.[/b] The nearest spot that is merely acceptable
-## beats a perfect one across the map — an NPC that runs forty metres to the ideal
-## corner has crossed the open ground it was trying to avoid.
+## Returns the index, or -1. Covered is the dot product of the spot's normal and the direction to
+## the threat (1 wall between, -1 wall behind). Scored, not filtered: the nearest acceptable spot beats a perfect one across open ground.
 func best_cover(
 	near: Vector3,
 	threat: Vector3,
@@ -472,12 +389,9 @@ func cover_position_from(
 	return cover_positions[index] if index >= 0 else near
 
 
-# --- Staleness ---------------------------------------------------------------
 
 ## Whether [param current] still describes the geometry this was generated from.
-##
-## A game calls this from its suite with its own map constants; failing it means
-## `tools/export_nav.gd` was not re-run.
+## A game calls this from its suite; failing means `tools/export_nav.gd` was not re-run.
 func matches(current_digest: String) -> bool:
 	return source_digest != "" and source_digest == current_digest
 
@@ -512,10 +426,8 @@ func validate() -> DotResult:
 			String(map_id)
 		)
 
-	# Longer than the point list is a generator bug and is refused; shorter is a
-	# version 1 document, which is legitimate and is filled in. The asymmetry is the
-	# point: absent means "not described yet", extra means "these describe points that
-	# do not exist", and silently trimming the second would hide a real mistake.
+		# Longer than the point list is a generator bug and is refused; shorter is a version 1
+		# document and is filled in. Silently trimming the extra would hide a real mistake.
 	if areas.size() > points.size() or flags.size() > points.size():
 		return DotResult.fail(
 			DotError.CODE_INVALID,

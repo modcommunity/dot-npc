@@ -2,24 +2,8 @@ class_name DotNpcNavGraph
 extends RefCounted
 
 ## A* over a [DotNpcNavData] point graph, plus the funnel a follower actually walks.
-##
-## [b]Why this exists rather than [code]NavigationServer3D[/code].[/b] Godot's own
-## navigation is a good answer to a different question: it bakes a mesh from source
-## geometry that exists in a scene at edit time. Every map in this family is built in
-## code from constants, so at edit time the scene is an empty node with a script and
-## there is nothing to bake. The nav data is therefore generated from the same
-## constants the geometry was — see [DotNpcNavData] — and what comes out is a graph of
-## points, not a polygon soup. A* over that graph is the honest consumer of it.
-##
-## [b]A game with authored geometry should use Godot's navigation instead, and this
-## does not stop it.[/b] Nothing else in dot-npc requires this class: a
-## [DotNpcDirector] with no nav data spawns anywhere and a brain that owns a
-## [code]NavigationAgent3D[/code] paths with that. This is what a code-built map gets
-## so that it is not the one shape of map that cannot have NPCs.
-##
-## [b]The index is built once and reused.[/b] A* on a hundred-point graph is
-## microseconds; rebuilding the adjacency list from a flat [PackedInt32Array] on every
-## query is not, and ninety NPCs repathing is exactly when it would be paid.
+## Not NavigationServer3D: code-built maps have nothing to bake, so the data is a graph (see [DotNpcNavData]).
+## The adjacency index is built once and reused, since ninety NPCs repathing would otherwise rebuild it per query.
 
 # No log channel: a search. A path that is not found is an answer, asked for several NPCs
 # a second, and the caller decides what it means; adopting or refusing the graph for a
@@ -28,18 +12,11 @@ extends RefCounted
 var data: DotNpcNavData = null
 
 ## Which points this searcher may use and what they cost it.
-##
-## Null means no filtering at all, which is not the same as a neutral filter and is
-## marginally cheaper: one graph serves every NPC on the map, and most of them have
-## nothing to say about it.
+## Null means no filtering, which is marginally cheaper than a neutral filter; most NPCs have nothing to say.
 var filter: DotNpcNavFilter = null
 
 ## Whether the last [method find_path] reached the goal or gave up short of it.
-##
-## Detour reports this as [code]DT_PARTIAL_RESULT[/code] and it is worth having for
-## the same reason: an NPC handed a partial path is walking towards something it
-## cannot reach, and a brain that cannot tell the difference will keep repathing to it
-## for ever.
+## Like Detour's partial result: a brain that cannot tell keeps repathing to something unreachable for ever.
 var last_partial: bool = false
 
 ## Point index -> Array[int] of neighbouring point indices.
@@ -51,19 +28,9 @@ var searches: int = 0
 ## How many of those failed to reach the goal.
 var failures: int = 0
 
-## Whether [method find_path] searches with Godot's [AStar3D] (native code) rather than the
-## script A* in [method _search]. On by default.
-##
-## [b]Measured, not assumed.[/b] game-zombie-zone's survival maps are fifteen to eighteen
-## thousand points, and at wave 10 its zombies asked two or three paths a tick: the script
-## search was three milliseconds a path and over half the server's tick, and a crowd repathing
-## together was a 170 ms tick. The same searches in [AStar3D] are a tenth of a millisecond.
-## The script search stays, as the reference the suite compares against and for a host that
-## wants it ([code]use_native_search = false[/code]).
-##
-## The answers are the same paths by cost, not always the same points: where two routes cost
-## exactly the same, the two searches may take different ones. Both are deterministic, so two
-## machines still agree.
+## Whether [method find_path] searches with Godot's [AStar3D] (native) rather than the script A* in [method _search]. On by default.
+## Measured: on 15-18 thousand points the script search was 3 ms a path and over half the server's tick; native is 0.1 ms.
+## The script search stays as the test reference. Equal-cost routes may differ between the two; both are deterministic.
 var use_native_search: bool = true
 
 ## One [AStar3D] per filter signature (see [method _native_for]), built on first use.
@@ -150,16 +117,9 @@ func rebuild(p_data: DotNpcNavData) -> DotResult:
 		var a := data.edges[pair * 2]
 		var b := data.edges[pair * 2 + 1]
 
-		# Both directions. The edge list is undirected by declaration, and a graph
-		# that recorded only one direction gives an NPC that can walk into a room and
-		# not out of it — which reads as a stuck brain rather than as a missing edge.
-		#
-		# Read, append, WRITE BACK. A PackedInt32Array is a value type in GDScript, so
-		# `_adjacency[a]` hands out a copy and appending to it appends to nothing. The
-		# first version of this did exactly that, and the symptom is the one this
-		# family keeps meeting: every edge was in the data, every count was right, and
-		# `find_path` returned empty for every pair of points. Nothing errored, because
-		# an empty adjacency list is a legitimate thing for an isolated point to have.
+				# Both directions: the edge list is undirected, and one direction gives an NPC that walks in and not out.
+				# Read, append, WRITE BACK: a PackedInt32Array is a value type, so `_adjacency[a]` is a copy and
+				# appending to it appends to nothing (every edge present, `find_path` empty for every pair).
 		var from_a: PackedInt32Array = _adjacency[a]
 		from_a.append(b)
 		_adjacency[a] = from_a
@@ -253,11 +213,8 @@ func neighbours(index: int) -> PackedInt32Array:
 
 
 ## A path of world positions from [param from] to [param to], ends included.
-##
-## Empty when either end is off the graph or the goal is unreachable. [b]Empty is not
-## the same as "stand still"[/b] and a caller must not treat it as one: an NPC handed
-## an empty path should fall back to steering straight at its target, because the
-## commonest cause is a target standing somewhere the generator did not put a point.
+## Empty when either end is off the graph or the goal is unreachable, which is not "stand still":
+## fall back to steering straight at the target (it often stands where the generator put no point).
 func find_path(
 	from: Vector3,
 	to: Vector3,
@@ -298,10 +255,9 @@ class PathQuery:
 	var partial := false
 
 
-## [method find_path] (or [method find_smooth_path]) for every query, [param workers] at a
-## time on [DotParallel], each worker on its own copy of the native search. The answers equal
-## the one-at-a-time calls whatever the worker count; 0, the script search, or no threads runs
-## them inline in order. Updates [member searches] and [member failures]; [member filter] is restored.
+## [method find_path] (or [method find_smooth_path]) for every query, [param workers] at a time on [DotParallel],
+## each worker on its own native search. Answers equal the one-at-a-time calls; 0, the script search or no
+## threads runs inline in order. Updates [member searches] and [member failures]; [member filter] is restored.
 func find_paths(queries: Array, workers: int) -> void:
 	if queries.is_empty():
 		return
@@ -516,10 +472,9 @@ func _native_copies(with: DotNpcNavFilter, count: int) -> Array:
 	return list.slice(0, count)
 
 
-## The [AStar3D] for [param with]: every point, the weight of arriving at it, and the points
-## the filter refuses disabled. Kept per filter SIGNATURE (its flags and costs, and the graph's
-## size) rather than per filter object, because a spawner hands the graph a filter per kind and
-## a game may build a fresh one each search; built once, it is reused for every search after.
+## The [AStar3D] for [param with]: every point, its arrival weight, filtered points disabled.
+## Kept per filter signature (flags, costs, graph size), not per object, because a spawner hands over
+## a filter per kind and a game may build a fresh one each search.
 func _native_for(with: DotNpcNavFilter) -> AStar3D:
 	var key := _native_key(with)
 	var found: Variant = _native.get(key)
@@ -562,11 +517,8 @@ func _native_key(with: DotNpcNavFilter) -> String:
 
 
 ## The nearest point this searcher is allowed to stand on.
-##
-## Not [method DotNpcNavData.nearest_point]: that answers "where is the mesh", and a
-## filtered search asks "where is the mesh I may use". An NPC that cannot crouch,
-## standing at the mouth of a crouch tunnel, would otherwise snap onto a point it may
-## not occupy and every path from it would fail at the first edge.
+## Not [method DotNpcNavData.nearest_point]: an NPC that cannot crouch at a crouch tunnel's mouth
+## would snap onto a point it may not occupy and every path would fail at the first edge.
 func _nearest_passable(p: Vector3, radius: float) -> int:
 	if filter == null:
 		return data.nearest_point(p, radius)
@@ -579,13 +531,8 @@ func _passes_index(index: int) -> bool:
 
 
 ## Plain A* with a straight-line heuristic.
-##
-## Returns [code]{came_from, reached, best}[/code]: where each point was reached from,
-## whether the goal was one of them, and the closest point to the goal that was — which
-## is what a partial path is built out of.
-##
-## A dictionary rather than arrays sized to the graph, because a graph is a few
-## hundred points and this runs when an NPC repaths rather than every tick.
+## Returns [code]{came_from, reached, best}[/code]; best is the closest point to the goal, which a partial path is built from.
+## A dictionary, not arrays sized to the graph: this runs when an NPC repaths, not every tick.
 func _search(start: int, goal: int) -> Dictionary:
 	var goal_position := data.points[goal]
 
@@ -596,14 +543,9 @@ func _search(start: int, goal: int) -> Dictionary:
 	var best_heuristic := goal_position.distance_to(data.points[start])
 	var closed := {}
 
-	# The open list is a binary heap of [priority, index], ordered by priority and then by
-	# the order things were pushed, so two equal priorities come out in the order the
-	# linear scan this replaced took them.
-	#
-	# It was a plain Array scanned linearly, with a note to revisit it "if a map ever ships
-	# thousands of points". game-zombie-zone's campaign maps are several thousand, and a
-	# horde of forty repathing every second and a half was a server spending most of its
-	# tick choosing the next node.
+		# The open list is a binary heap of [priority, index], ordered by priority then push order, so
+		# equal priorities come out as the old linear scan took them. The scan was most of a tick with
+		# a horde of forty repathing on maps of several thousand points.
 	var open := _Heap.new()
 	open.push(goal_position.distance_to(data.points[start]), start)
 
@@ -630,10 +572,8 @@ func _search(start: int, goal: int) -> Dictionary:
 
 			var step := here.distance_to(data.points[next])
 
-			# The cost of a step is its length times what the destination is made of.
-			# Detour charges the filter per polygon crossed; here the point is the
-			# polygon, and charging on arrival rather than departure is what makes a
-			# single expensive tile in the middle of cheap ground cost something.
+						# Step cost is length times what the destination is made of, charged on arrival, so one
+						# expensive tile in the middle of cheap ground costs something.
 			if filter != null:
 				step *= filter.cost_multiplier(
 					data.area_of(next), data.flags_of(next)
@@ -669,25 +609,17 @@ func is_reachable(from: Vector3, to: Vector3, snap_radius: float = -1.0) -> bool
 	return not find_path(from, to, snap_radius).is_empty()
 
 
-# --- Smoothing ---------------------------------------------------------------
 
 ## Whether an NPC can walk straight from [param a] to [param b].
-##
-## Detour asks its navmesh with a raycast; a point graph has no polygons to cast
-## against, so the corridor is sampled instead: every sample must be within reach of a
-## point this searcher may use. That is stricter than a raycast at a doorway — a
-## diagonal squeeze whose midpoint has no graph point is refused — and being strict is
-## the right way round, because the cost of a wrong "yes" is an NPC walking into a
-## wall and the cost of a wrong "no" is one extra corner in the path.
+## A point graph has no polygons to raycast, so the corridor is sampled. Stricter than a raycast at a
+## doorway, deliberately: a wrong "yes" walks into a wall, a wrong "no" costs one corner.
 func can_walk_straight(a: Vector3, b: Vector3, corridor: float = -1.0) -> bool:
 	if not is_ready():
 		return false
 
 	var width := data.point_radius if corridor < 0.0 else corridor
-	# No wider than three quarters of a cell: at the point radius (1.25 spacings) a sample
-	# beside a corner snapped to a point across it, and smoothing cut corners the graph goes
-	# round (dot-npc-smooth-corner-1, found when the native search changed which of two equal
-	# routes a path takes).
+		# No wider than three quarters of a cell: at the point radius a sample beside a corner snapped to a
+		# point across it and smoothing cut corners the graph goes round.
 	if data.grid_spacing > 0.0:
 		width = minf(width, data.grid_spacing * 0.75)
 	var distance := a.distance_to(b)
@@ -695,14 +627,9 @@ func can_walk_straight(a: Vector3, b: Vector3, corridor: float = -1.0) -> bool:
 	if distance <= 0.001:
 		return true
 
-	# [b]Connectivity, not proximity, and the difference is a wall.[/b] The obvious
-	# test — "every sample along the line is near some point" — passes straight
-	# through any wall thin enough to have graph points on both sides of it, because
-	# a sample in the middle of it is within reach of the points beside it. The
-	# builder already solved that at generation time: it refused to connect two points
-	# whose straight line crossed an obstacle. So the question to ask at runtime is
-	# whether the line stays inside the edges the builder drew, and the answer is
-	# exact rather than a threshold.
+		# Connectivity, not proximity: "every sample is near some point" passes through a wall thin enough
+		# to have points on both sides. The builder refused to connect points across an obstacle, so ask
+		# whether the line stays inside the edges it drew; that is exact rather than a threshold.
 	var step := maxf(data.spacing() * 0.4, 0.05)
 	var steps := maxi(int(ceil(distance / step)), 1)
 
@@ -738,23 +665,8 @@ func _are_neighbours(a: int, b: int) -> bool:
 	return false
 
 
-## Removes the corners a grid put in a path that the world does not have.
-##
-## [b]This is the difference between a path and a path anybody believes.[/b] A graph
-## on a two-metre grid can only turn in eight directions, so crossing an open room
-## comes out as a staircase: an NPC walking it visibly zig-zags across ground with
-## nothing in it. Detour solves the polygon version with the funnel algorithm; the
-## point-graph version is the same idea reached the other way — walk forward from each
-## kept waypoint and drop everything up to the furthest one still reachable in a
-## straight line.
-##
-## Runs in a bounded number of visibility tests rather than the O(n²) the naive
-## spelling costs: [param lookahead] caps how far ahead one waypoint may reach.
-##
-## [param horizon] above 0 smooths only the path's first [param horizon] points and keeps the
-## rest as the graph gave them. A follower that repaths every second and a half never walks
-## far past the first few metres of a path, and smoothing a forty-point path was most of
-## what a path cost once the search was native (game-zombie-zone at wave 10).
+## Removes the corners a grid put in a path: from each kept waypoint, drop everything up to the furthest one
+## reachable in a line. [param lookahead] bounds the tests; [param horizon] above 0 smooths only the first points.
 func smooth_path(
 	path: PackedVector3Array, corridor: float = -1.0, lookahead: int = 8, horizon: int = 0
 ) -> PackedVector3Array:

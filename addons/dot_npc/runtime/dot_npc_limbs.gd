@@ -1,13 +1,9 @@
 class_name DotNpcLimbs
 extends Node
 
-## Shootable limbs for one NPC body: which region a point is in, how much each limb has taken, and which are
-## gone. Regions and numbers are data (`limbs:` in a `cfg/addons/<addon>/*.yml`, see [method defs_from_config]).
-## Server-authoritative; a client only [method apply_mask]. It imports no combat code: a game's shot code
-## resolves a hit to a world point and calls [method hit] (add this node under the body).
-##
-## A server has no model, so region geometry comes from the rest pose of the skeleton in [member rest_model],
-## read once and cached. A drawn body uses its live [member skeleton] instead, so a raised head is where it is drawn.
+## Shootable limbs for one NPC body: which region a point is in, how much each limb has taken, which are gone.
+## Regions and numbers are data (`limbs:` in a config yml, see [method defs_from_config]). Server-authoritative; a client only [method apply_mask].
+## A server has no model, so region geometry comes from [member rest_model]'s rest pose; a drawn body uses its live [member skeleton].
 
 const CHANNEL := "npc.limbs"
 ## Bits of the replicated mask: the limbs of one definition, in config order.

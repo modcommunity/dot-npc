@@ -3,24 +3,11 @@ class_name DotNpcDef
 extends Resource
 
 ## One kind of NPC a game can spawn.
-##
-## [b]A definition, not a scene.[/b] Same reasoning as [code]DotPropDef[/code] and
-## [code]DotMapDef[/code]: a director deciding whether it can afford four more zombies
-## must answer that [i]without loading four scenes[/i], and a client showing a spawn
-## menu of eighty entity kinds must not load eighty.
-##
-## [b]The brain is named by PATH, never by [code]class_name[/code].[/b] A mounted
-## dot-cloud pack cannot register a global class — `class_name` is resolved when the
-## project's script cache is built, and a `.pck` mounted at runtime arrives long after
-## that. A delivered NPC therefore names its brain the only way a delivered thing can:
-## [code]res://.../zombie_brain.gd[/code], loaded with [method load]. This is the same
-## rule game-playground's entity catalogue already follows.
+## A definition, not a scene: a director must price four more zombies without loading four scenes.
+## The brain is named by path, never class_name: a pack mounted at runtime cannot register a global class.
 
 ## How much of the world's simulation budget one of these is worth.
-##
-## Not a mass and not a poly count: a director capping population cares about what an
-## NPC costs to think and to move, and a shambler and a sprinter of the same size do
-## not cost the same.
+## Not a mass or poly count: what an NPC costs to think and to move.
 enum Weight {
 	TRIVIAL,
 	LIGHT,
@@ -40,23 +27,17 @@ enum Weight {
 @export var category: StringName = &"npc"
 
 ## Who this NPC counts as. Two NPCs of the same faction do not fight.
-##
-## [b]A StringName rather than an enum, because the set is the game's.[/b] An enum
-## here would mean every game that wanted a third side had to fork the addon.
+## A StringName, not an enum: the set is the game's, and an enum would force a fork.
 @export var faction: StringName = &"hostile"
 
 @export_group("Content")
 
 ## The scene instantiated on spawn.
-##
-## May live inside a dot-cloud pack, in which case the pack must be mounted first —
-## which is the game's business, not this addon's.
+## May live in a dot-cloud pack, which the game must mount first.
 @export var scene_path: String = ""
 
 ## The brain script, by path. Empty for an NPC the scene scripts itself.
-##
-## See the class note: never a [code]class_name[/code], because a mounted pack has no
-## way to register one.
+## Never a class_name: a mounted pack cannot register one.
 @export var brain_script_path: String = ""
 
 ## The dot-cloud content id this NPC lives in, or empty when it ships in the build.
@@ -67,10 +48,7 @@ enum Weight {
 @export var weight: Weight = Weight.NORMAL
 
 ## What one of these costs against a population budget. See [DotNpcLimits].
-##
-## Separate from [member weight] so a game can make one specific kind expensive
-## without reclassifying it — which is what happens when one kind turns out to be the
-## one that tanks the tick.
+## Separate from [member weight] so one kind can be made expensive without reclassifying it.
 @export_range(1, 100, 1) var cost: int = 1
 
 @export_range(1.0, 100000.0, 1.0) var max_health: float = 100.0
@@ -86,36 +64,24 @@ enum Weight {
 ## Half-angle of the sight cone, in degrees. 180 is all-round vision.
 @export_range(0.0, 180.0, 1.0) var sight_half_angle_deg: float = 60.0
 
-## How far it can hear, in metres. Hearing ignores the cone and ignores facing.
-##
-## [b]Deliberately separate from sight, and usually smaller.[/b] An NPC that only saw
-## could be walked up behind for ever; one whose hearing equalled its sight has no
-## behind at all.
+## How far it can hear, in metres. Hearing ignores the cone and facing.
+## Separate from sight and usually smaller, or an NPC could never be approached from behind.
 @export_range(0.0, 500.0, 0.5) var hearing_range: float = 12.0
 
 ## Whether a target must be in line of sight, not merely in the cone.
-##
-## Off for a cheap critter — a raycast per candidate per NPC per tick is the single
-## most expensive thing in here.
+## Off for a cheap critter: a raycast per candidate per NPC per tick is the costliest thing here.
 @export var require_line_of_sight: bool = true
 
 ## How far above its feet the NPC looks from, in metres: where the sight line starts.
-##
-## [b]Not zero, and that was a bug.[/b] The line used to start at the NPC's position, which is
-## its feet, which is ON the floor it stands on — and a ray that starts on a surface hits it at
-## distance zero. Every NPC standing on a floor with line of sight on was blind, saw nobody, and
-## nothing said so; game-arena had line of sight turned off for another reason and never met it.
-## game-zombie-zone's idle commons found it by never noticing a survivor in front of them.
+## Not zero: a ray that starts on the floor it stands on hits it at distance zero, so the
+## NPC was blind with line of sight on and nothing said so.
 @export_range(0.0, 20.0, 0.05) var eye_height: float = 1.5
 
 @export_group("Navigation")
 
 ## Navigation flags this kind of NPC cannot traverse. See [enum DotNpcNavData.Flag].
-##
-## [b]On the definition rather than on the graph, because it is a property of the
-## thing walking.[/b] A crouch tunnel is a fact about the map; whether it is a way
-## through is a fact about what is trying to use it, and one graph serves every NPC on
-## the map. Zero — the default — is an NPC that will go anywhere the graph goes.
+## On the definition, not the graph: whether a crouch tunnel is a way through depends on the
+## walker, and one graph serves every NPC. Zero goes anywhere the graph goes.
 @export_flags(
 	"Crouch:1", "Jump:2", "Avoid:4", "Stop:8", "Walk:16", "Door:32"
 ) var nav_exclude_flags: int = 0

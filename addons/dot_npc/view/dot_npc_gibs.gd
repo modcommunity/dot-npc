@@ -1,11 +1,9 @@
 class_name DotNpcGibs
 extends RefCounted
 
-## What a severed limb looks like: the limb's own triangles as a tumbling body, a raw stump on what is left,
-## and blood. Drawn only; the server decides what came off ([DotNpcLimbs]). No game knowledge.
-##
-## The limb is cut out of the model by vertex weight, not by scaling bones on a second copy: scaled-away bones
-## leave stretched slivers across the cut. The skinned body hides the limb by collapsing its root bone.
+## What a severed limb looks like: the limb's own triangles as a tumbling body, a raw stump on what is left, and blood.
+## Drawn only; the server decides what came off ([DotNpcLimbs]). The limb is cut out of the model by vertex weight,
+## not by scaling bones on a copy, which leaves stretched slivers; the skinned body hides it by collapsing its root bone.
 
 ## The default cap; the live one is [member DotNpcGore.max_gibs].
 const MAX_GIBS := DotNpcGore.DEFAULT_MAX_GIBS
@@ -79,10 +77,9 @@ static func _longest_edge(p: PackedVector3Array, a: int, b: int, c: int) -> floa
 	return maxf(p[a].distance_to(p[b]), maxf(p[b].distance_to(p[c]), p[c].distance_to(p[a])))
 
 
-## Collapses [param root]'s bone and drops every triangle of the drawn body that the collapse would drag into a
-## sheet (its longest edge grows past [param grow] times and by a visible amount). Skin weighted partly to the
-## collapsed bone (entrails, a belly flap) would otherwise stretch toward the joint. Each body gets its own copy
-## of the mesh, so the shared resource stays whole.
+## Collapses [param root]'s bone and drops every triangle of the drawn body the collapse would drag into a sheet
+## (its longest edge grows past [param grow] times and by a visible amount). Each body gets its own mesh copy,
+## so the shared resource stays whole.
 static func collapse_bone(sk: Skeleton3D, model: Node, root: int, grow := 2.0) -> void:
 	var meshes: Array = []
 	var reused: Array = []

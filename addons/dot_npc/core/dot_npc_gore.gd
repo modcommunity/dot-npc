@@ -1,13 +1,9 @@
 class_name DotNpcGore
 extends RefCounted
 
-## How much dismemberment a process shows and allows, as one process-wide dial (`gore_level`) plus the
-## gib cap. A server owner or a family-friendly platform turns it down; no game logic reads anything else.
-##
-## Static on purpose: gore is a presentation policy, and a listen server and its client are one process.
-## The server side of it (whether a limb can come off, how much it takes) is read by [DotNpcLimbs];
-## the drawn side (gib bodies, spray, drip) by [DotNpcGibs]. Level 0 is "no dismemberment": every
-## limb call is a no-op, so a body behaves as if it had no limbs.
+## One process-wide dial (`gore_level`) plus the gib cap for how much dismemberment is shown and allowed.
+## Static on purpose: gore is presentation policy and a listen server and its client share a process.
+## Level 0 makes every limb call a no-op. Read by [DotNpcLimbs] (server) and [DotNpcGibs] (drawn).
 
 const OFF := 0
 ## Limbs come off as clean stumps: no flying gib, no spray, no drip.
