@@ -10,7 +10,7 @@ const CHECKS := 239 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 
 ## Sections entered against sections that ran to their last line. A runtime error inside a section aborts that
 ## function and nothing says so; a section that bailed early after a failed guard counts as unfinished on purpose.
 ## CHECKS is the other half; see docs/testing.md.
-const SECTIONS := 40
+const SECTIONS := 41
 
 func _ready() -> void:
 	DotLog.set_level(DotLog.Level.ERROR)
@@ -44,6 +44,7 @@ func _run() -> void:
 	_test_senses_pruning()
 	_test_senses_workers()
 	_test_senses_quiet()
+	_test_senses_blind_and_smoke()
 	_test_target_since()
 	_test_spawning()
 	_test_spawning_2d()

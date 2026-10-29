@@ -342,3 +342,45 @@ func _test_senses_grace() -> void:
 		"ignoring the player hitting it to chase one that left is worse than either"
 	)
 	_done()
+
+
+func _test_senses_blind_and_smoke() -> void:
+	_section("senses: blindness and smoke")
+
+	var senses := DotNpcSenses.new()
+	var def := DotNpcDef.make(&"seer", BODY)
+	def.require_line_of_sight = false
+	def.sight_half_angle_deg = 180.0
+	def.sight_range = 30.0
+	def.hearing_range = 10.0
+
+	var npc := _loose_npc(def)
+	var far := _candidate(&"far", Vector3(0, 0, -20))
+	_check(senses.update_target(npc, [far], 0.0) == &"far", "baseline: a visible target is seen")
+
+	npc.target_id = &""
+	npc.blind_for(1.0, 2.0)
+	_check(not senses.perceives(npc, far), "a blinded NPC does not see a visible target")
+	senses.now = 1.5
+	_check(senses.update_target(npc, [far], 1.5) == &"", "and acquires nothing while blind")
+
+	var loud := _candidate(&"loud", Vector3(0, 0, -5), &"player", 8.0)
+	_check(senses.perceives(npc, loud), "but still hears a loud one")
+
+	senses.now = 3.5
+	_check(senses.update_target(npc, [far], 3.5) == &"far", "it sees again once the time is up")
+
+	npc.target_id = &""
+	var id := senses.add_sight_blocker(Vector3(0, def.eye_height, -10), 2.0, 5.0)
+	_check(senses.update_target(npc, [far], 4.0) == &"", "a target behind smoke is not seen")
+	_check(senses.perceives(npc, loud), "smoke does not stop hearing")
+	var aside := _candidate(&"aside", Vector3(10, 0, -20))
+	_check(senses.perceives(npc, aside), "a target whose line misses the smoke is seen")
+	senses.remove_sight_blocker(id)
+	_check(senses.update_target(npc, [far], 4.1) == &"far", "removing the smoke restores sight")
+
+	npc.target_id = &""
+	senses.add_sight_blocker(Vector3(0, def.eye_height, -10), 2.0, 1.0)
+	_check(senses.update_target(npc, [far], 4.2) == &"", "smoke blocks again")
+	_check(senses.update_target(npc, [far], 6.0) == &"far", "and expires by itself")
+	_done()

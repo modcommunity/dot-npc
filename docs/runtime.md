@@ -42,6 +42,10 @@ Perception is the single biggest cost in the addon, so it is **staggered**: `sen
 
 `DotNpcInstance.sight_scale` multiplies `DotNpcDef.sight_range` for one NPC. How far a kind can see belongs in the catalogue; how attentive this one is belongs to its character, and dot-npc-ai's brain writes the character's `alertness` here. Sight only: hearing is a loudness the game measured, and scaling it would be an NPC that hears a footstep further than the footstep travels.
 
+### Blindness and smoke are sight-only, default off (API 6)
+
+`DotNpcInstance.blind_for(now, seconds)` (field `blind_until`) switches one NPC's sight off for a while; `DotNpcSenses.add_sight_blocker(center, radius, seconds)` registers a smoke sphere that any eye-to-target line passing through is blocked by (`remove_sight_blocker`, `clear_sight_blockers`; seconds <= 0 lasts until removed). Hearing is untouched in both, a flash that lures and a smoke that muffles are the host's to add. `now` is the simulated clock the senses last saw (`update_target`/`decide`), so a host passes the same clock to `blind_for`. Nothing is blind or blocked until a host calls them.
+
 ### `engaged_at` and `target_since` are different questions
 
 | | |

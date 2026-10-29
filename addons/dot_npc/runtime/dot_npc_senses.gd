@@ -43,9 +43,56 @@ var occlusion_mask: int = 1
 ## exactly what the full nearest-first pass picks with fewer rays. False runs that full pass.
 var prune_by_held: bool = true
 
+## Simulated seconds of the latest [method update_target] / [method decide], what blindness and blocker expiry read.
+var now: float = 0.0
+
 var sight_checks: int = 0
 var los_casts: int = 0
 var _ray := PhysicsRayQueryParameters3D.new()
+var _blockers: Array = []
+var _next_blocker: int = 1
+
+
+## Registers a sight-blocking sphere (smoke) and returns its id. Sight only; hearing passes through.
+## [param seconds] <= 0 lasts until [method remove_sight_blocker].
+func add_sight_blocker(center: Vector3, radius: float, seconds: float = 0.0) -> int:
+	var id := _next_blocker
+	_next_blocker += 1
+	_blockers.append({"id": id, "center": center, "radius": maxf(radius, 0.0),
+		"until": now + seconds if seconds > 0.0 else INF})
+	return id
+
+
+func remove_sight_blocker(id: int) -> void:
+	for i in _blockers.size():
+		if _blockers[i]["id"] == id:
+			_blockers.remove_at(i)
+			return
+
+
+func clear_sight_blockers() -> void:
+	_blockers.clear()
+
+
+## Whether a sight line between two points passes through any live blocker.
+func sight_blocked(from: Vector3, to: Vector3) -> bool:
+	if _blockers.is_empty():
+		return false
+
+	var seg := to - from
+	var len2 := seg.length_squared()
+
+	for i in range(_blockers.size() - 1, -1, -1):
+		var b: Dictionary = _blockers[i]
+		if now >= b["until"]:
+			_blockers.remove_at(i)
+			continue
+		var c: Vector3 = b["center"]
+		var t := 0.0 if len2 < 0.000001 else clampf((c - from).dot(seg) / len2, 0.0, 1.0)
+		if (from + seg * t).distance_squared_to(c) <= b["radius"] * b["radius"]:
+			return true
+
+	return false
 
 
 ## Whether [param npc] can perceive [param cand] right now, ignoring commitment.
@@ -73,7 +120,13 @@ func _perceives_at(npc: DotNpcInstance, cand: Candidate, to_target: Vector3) -> 
 	if distance <= minf(npc.def.hearing_range, cand.loudness):
 		return true
 
+	if now < npc.blind_until:
+		return false
+
 	if distance > npc.def.sight_range * maxf(npc.sight_scale, 0.0):
+		return false
+
+	if sight_blocked(npc.position() + Vector3.UP * npc.def.eye_height, cand.position):
 		return false
 
 	if npc.def.sight_half_angle_deg < 180.0:
@@ -118,19 +171,20 @@ func _has_line_of_sight(npc: DotNpcInstance, cand: Candidate) -> bool:
 
 
 ## Picks or keeps a target for [param npc]. Returns its id, or empty for none.
-## [param now] is simulated seconds. Candidates within reach are tested nearest first, at most
+## [param now_arg] is simulated seconds (kept in [member now]). Candidates within reach are tested nearest first, at most
 ## [param candidate_cap], plus the committed one.
-func update_target(npc: DotNpcInstance, candidates: Array, now: float,
+func update_target(npc: DotNpcInstance, candidates: Array, now_arg: float,
 		candidate_cap: int = 32) -> StringName:
 	if npc == null or not npc.is_alive() or npc.def == null:
 		return &""
 
+	now = now_arg
 	var packed := Packed.new()
 	packed.fill(candidates)
 	var held := packed.index_of(npc.target_id)
 	var order := rank(npc.position(), reach_of(npc), npc.def.hearing_range,
 		packed.faction_of(npc.def.faction), packed, candidate_cap)
-	return decide(npc, candidates, order, held, now)
+	return decide(npc, candidates, order, held, now_arg)
 
 
 ## Candidates as packed arrays, built once a tick on the main thread: what [method rank] reads,
@@ -237,7 +291,8 @@ static func rank_many(from: int, to: int, here: PackedVector3Array, sight: Packe
 ## tests in order until one is perceived (the nearest, so nothing further can be better), and
 ## the committed candidate ([param held], its index or -1) too. Main thread: it casts rays.
 func decide(npc: DotNpcInstance, candidates: Array, order: PackedInt32Array, held: int,
-		now: float) -> StringName:
+		now_arg: float) -> StringName:
+	now = now_arg
 	if npc == null or not npc.is_alive() or npc.def == null:
 		return &""
 
@@ -259,7 +314,7 @@ func decide(npc: DotNpcInstance, candidates: Array, order: PackedInt32Array, hel
 		# answer, so the pass stops after the last such rival in order. Not perceived: the
 		# full pass below, which reuses this result instead of casting again.
 		if _perceives_at(npc, held_cand, held_cand.position - here):
-			return _decide_held(npc, candidates, order, held, held_cand, now)
+			return _decide_held(npc, candidates, order, held, held_cand)
 		held_tested = true
 
 	for index in order:
@@ -332,7 +387,7 @@ func decide(npc: DotNpcInstance, candidates: Array, order: PackedInt32Array, hel
 ## to the last rival nearer than switch_ratio of its distance, which is what the full pass's
 ## first perceived would be wherever the answer could differ.
 func _decide_held(npc: DotNpcInstance, candidates: Array, order: PackedInt32Array, held: int,
-		held_cand: Candidate, now: float) -> StringName:
+		held_cand: Candidate) -> StringName:
 	var here := npc.position()
 	var limit := here.distance_to(held_cand.position) * switch_ratio
 	var last := -1

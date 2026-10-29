@@ -56,6 +56,10 @@ var target_since: float = 0.0
 ## Per instance: a kind's range and one NPC's attentiveness differ. Sight only; hearing is a measured loudness.
 var sight_scale: float = 1.0
 
+## Simulated seconds until which sight is off (hearing is not); below the senses' clock means sighted.
+## A flash sets it via [method blind_for]; the default sees as the kind says.
+var blind_until: float = -1.0
+
 ## The last perception pass found nothing within reach (see [member DotNpcLimits.sense_quiet_mult]).
 var sense_quiet: bool = false
 
@@ -155,3 +159,8 @@ func _to_string() -> String:
 	return "DotNpcInstance(%s hp %.0f)" % [
 		String(def.id) if def != null else "?", health
 	]
+
+
+## Blinds this NPC for [param seconds] from [param now]; never shortens a longer blindness.
+func blind_for(now: float, seconds: float) -> void:
+	blind_until = maxf(blind_until, now + seconds)

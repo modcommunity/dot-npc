@@ -7,5 +7,6 @@ extends RefCounted
 # 1: before this file existed (absent reads as 1). 2: DotNpcInstance.seed, DotNpcSpawner seed_base/seed_source/seed_for().
 # 3: DotNpcProfiles, DotNpcDef.from_profile, DotNpcDef.extra and menu. 4: DotNpcProfiles.profile_schemas.
 # 5: DotNpcLimbs, DotNpcGibs, DotNpcNetSync.limb_specs.
-const LEVEL := 5
+# 6: DotNpcInstance.blind_for/blind_until, DotNpcSenses sight blockers (add_sight_blocker).
+const LEVEL := 6
 const OLDEST := 1
