@@ -5,7 +5,7 @@ extends "res://examples/selftest/brain_tests.gd"
 ## a graph that joins a walkway to the floor below, a reclaim that deletes what is chasing someone. Real nodes, real tree.
 
 
-const CHECKS := 239 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2 + 3 + 2 + 3 + 2
+const CHECKS := 239 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2 + 3 + 2 + 3 + 2 + 11
 
 ## Sections entered against sections that ran to their last line. A runtime error inside a section aborts that
 ## function and nothing says so; a section that bailed early after a failed guard counts as unfinished on purpose.
