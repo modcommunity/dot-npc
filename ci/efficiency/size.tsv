@@ -1,10 +1,8 @@
 # size
 # Baselines only shrink: scripts/<gate> --update lowers or drops entries and refuses to add.
 addons/dot_npc/nav/dot_npc_nav_builder.gd	873
-addons/dot_npc/nav/dot_npc_nav_graph.gd	932
-addons/dot_npc/nav/dot_npc_nav_graph.gd::_plan	104
-addons/dot_npc/runtime/dot_npc_senses.gd::decide	98
-addons/dot_npc/runtime/dot_npc_spawner.gd	1346
+addons/dot_npc/nav/dot_npc_nav_graph.gd	850
+addons/dot_npc/runtime/dot_npc_spawner.gd	1201
 examples/npc_selftest.gd	1107
 examples/npc_selftest.gd::_test_nav_at_scale	93
 examples/npc_selftest.gd::_test_nav_filter	103

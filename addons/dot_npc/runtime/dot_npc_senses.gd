@@ -338,6 +338,12 @@ func decide(npc: DotNpcInstance, candidates: Array, order: PackedInt32Array, hel
 		committed = held_cand
 		committed_distance = here.distance_to(held_cand.position)
 
+	return _commit(npc, best, best_distance, committed, committed_distance)
+
+
+## The commitment half of [method decide]: stickiness, grace and the first commitment.
+func _commit(npc: DotNpcInstance, best: Candidate, best_distance: float, committed: Candidate,
+		committed_distance: float) -> StringName:
 	if committed != null:
 		npc.target_seen_at = now
 		npc.engaged_at = now

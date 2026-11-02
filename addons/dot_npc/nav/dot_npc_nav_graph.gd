@@ -367,6 +367,13 @@ func _plan(from: Vector3, to: Vector3, snap_radius: float, allow_partial: bool, 
 		_find_native(from, to, start, goal, allow_partial, astar, answer)
 		return answer
 
+	_plan_script(from, to, start, goal, allow_partial, answer)
+	return answer
+
+
+## [method _plan]'s script A* half: search, then the chain walked back into [param answer].
+func _plan_script(from: Vector3, to: Vector3, start: int, goal_in: int, allow_partial: bool, answer: PathAnswer) -> void:
+	var goal := goal_in
 	var result := _search(start, goal)
 	var came_from: Dictionary = result["came_from"]
 	var reached := bool(result["reached"])
@@ -377,12 +384,12 @@ func _plan(from: Vector3, to: Vector3, snap_radius: float, allow_partial: bool, 
 		# Detour returns a partial path to the closest node it managed to reach: walking to the
 		# near side of the wall beats standing still.
 		if not allow_partial:
-			return answer
+			return
 
 		goal = int(result["best"])
 
 		if goal == start:
-			return answer
+			return
 
 		answer.partial = true
 
@@ -398,7 +405,7 @@ func _plan(from: Vector3, to: Vector3, snap_radius: float, allow_partial: bool, 
 		if previous == null:
 			answer.failures += 1
 			answer.points = PackedVector3Array()
-			return answer
+			return
 
 		walk = int(previous)
 
@@ -407,6 +414,7 @@ func _plan(from: Vector3, to: Vector3, snap_radius: float, allow_partial: bool, 
 
 	# The caller's own ends, not the graph points nearest them, or an NPC walks back to the node
 	# before setting off; and never the goal on a partial path, which would lead through the wall.
+	var out := answer.points
 	out.append(from)
 
 	for i in chain:
@@ -416,8 +424,6 @@ func _plan(from: Vector3, to: Vector3, snap_radius: float, allow_partial: bool, 
 		out.append(to)
 
 	answer.points = out
-	return answer
-
 
 ## [method _plan]'s search and assembly in [param astar]. [param start] and [param goal] are
 ## already snapped, distinct and in one component (or a filter is set).
