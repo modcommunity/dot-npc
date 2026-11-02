@@ -142,6 +142,12 @@ static func collapse_bone(sk: Skeleton3D, model: Node, root: int, grow := 2.0) -
 
 ## The limb's triangles in skeleton space, centred on its joint, or null when it has none.
 static func limb_mesh(sk: Skeleton3D, model: Node, root: int, key: String) -> ArrayMesh:
+	# Species/limb alone would serve a variant model another model's gib.
+	for m in model.find_children("*", "MeshInstance3D", true, false):
+		var src: Mesh = (m as MeshInstance3D).get_meta(PRISTINE, (m as MeshInstance3D).mesh)
+		if src != null:
+			key += "#%d" % src.get_instance_id()
+			break
 	if _mesh_cache.has(key):
 		return _mesh_cache[key]
 	var in_limb := subtree(sk, root)

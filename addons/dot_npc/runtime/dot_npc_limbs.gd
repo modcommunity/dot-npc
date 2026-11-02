@@ -258,5 +258,7 @@ static func rest_points(path: String) -> Dictionary:
 					if sk.get_bone_parent(i) >= 0:
 						out["@" + sk.get_bone_name(i)] = StringName(sk.get_bone_name(sk.get_bone_parent(i)))
 			root.free()
-	_rest_cache[path] = out
+	# An empty answer may be a scene not mounted yet; only a read skeleton is kept.
+	if not out.is_empty():
+		_rest_cache[path] = out
 	return out
