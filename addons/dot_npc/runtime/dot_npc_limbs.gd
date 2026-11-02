@@ -232,6 +232,13 @@ func _distance(d: Dictionary, p: Vector3) -> float:
 	return best
 
 
+## Keeps [param points] (bone to origin, as [method rest_points] returns) under a synthetic [param path] a host measured itself.
+## An empty read is never cached, so filling the returned dictionary no longer reaches the cache.
+static func store_rest_points(path: String, points: Dictionary) -> void:
+	if not points.is_empty():
+		_rest_cache[path] = points
+
+
 ## Bone name to origin in the body's own space, at rest, read from the scene at [param path] once and kept.
 ## `"@bone"` keys map a bone to its parent's name.
 static func rest_points(path: String) -> Dictionary:
