@@ -5,7 +5,7 @@ extends "res://examples/selftest/brain_tests.gd"
 ## a graph that joins a walkway to the floor below, a reclaim that deletes what is chasing someone. Real nodes, real tree.
 
 
-const CHECKS := 239 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2 + 3 + 2 + 3 + 2 + 11
+const CHECKS := 239 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2 + 3 + 2 + 3 + 2 + 11 + 3
 
 ## Sections entered against sections that ran to their last line. A runtime error inside a section aborts that
 ## function and nothing says so; a section that bailed early after a failed guard counts as unfinished on purpose.
@@ -271,6 +271,15 @@ func _test_limbs() -> void:
 	# A recycled body starts whole.
 	late.setup(&"dummy", defs, stub)
 	_check(late.mask() == 0 and not late.is_severed(&"head") and stub.restores == 1, "setup resets the severed set and restores the view")
+	# c80b948: an empty rest read is not cached, so a host fills the dictionary through store_rest_points.
+	var arm := DotNpcLimbs.new()
+	arm.rest_model = "synthetic://limbs_regression"
+	body.add_child(arm)
+	var arm_def: Dictionary = defs["armL"]
+	_check(arm.points_of(arm_def).is_empty(), "an arm with no rest data has no points")
+	DotNpcLimbs.store_rest_points(arm.rest_model, {&"armL": Vector3(-0.5, 1.4, 0)})
+	_check(arm.points_of(arm_def).size() >= 1, "points_of on an arm returns points once the host stores rest points after the first read")
+	_check(arm.points_of(arm_def)[0].is_equal_approx(body.global_transform * Vector3(-0.5, 1.4, 0)), "the stored arm origin is the first point")
 	body.queue_free()
 	_done()
 
