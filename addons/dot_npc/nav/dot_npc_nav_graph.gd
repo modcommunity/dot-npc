@@ -616,6 +616,15 @@ func is_reachable(from: Vector3, to: Vector3, snap_radius: float = -1.0) -> bool
 
 
 
+## Widest a straight-line sample may sit from a point that is missing grid neighbours (beside an obstacle or an
+## edge), in grid cells. Points keep the build clearance from an obstacle, so a line 0.75 cell from such a point
+## can graze the corner it stands beside; a point with every neighbour has no corner within reach.
+var straight_width_ratio: float = 0.75
+
+## Neighbours a point has when every cell round it is walkable (the grid's eight).
+const FULL_NEIGHBOURS := 8
+
+
 ## Whether an NPC can walk straight from [param a] to [param b].
 ## A point graph has no polygons to raycast, so the corridor is sampled. Stricter than a raycast at a
 ## doorway, deliberately: a wrong "yes" walks into a wall, a wrong "no" costs one corner.
@@ -640,14 +649,14 @@ func can_walk_straight(a: Vector3, b: Vector3, corridor: float = -1.0) -> bool:
 	var steps := maxi(int(ceil(distance / step)), 1)
 
 	var previous := _nearest_passable(a, width)
-	if previous < 0:
+	if previous < 0 or not _sample_clear(a, previous):
 		return false
 
 	for i in range(1, steps + 1):
 		var probe := a.lerp(b, float(i) / float(steps))
 		var current := _nearest_passable(probe, width)
 
-		if current < 0:
+		if current < 0 or not _sample_clear(probe, current):
 			return false
 
 		if current == previous:
@@ -662,6 +671,16 @@ func can_walk_straight(a: Vector3, b: Vector3, corridor: float = -1.0) -> bool:
 		previous = current
 
 	return true
+
+
+func _sample_clear(at: Vector3, point: int) -> bool:
+	if data.grid_spacing <= 0.0:
+		return true
+
+	if at.distance_to(data.points[point]) <= data.grid_spacing * straight_width_ratio + 0.01:
+		return true
+
+	return neighbours(point).size() >= FULL_NEIGHBOURS
 
 
 func _are_neighbours(a: int, b: int) -> bool:

@@ -5,7 +5,7 @@ extends "res://examples/selftest/replication_tests.gd"
 ## a graph that joins a walkway to the floor below, a reclaim that deletes what is chasing someone. Real nodes, real tree.
 
 
-const CHECKS := 239 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2 + 3 + 2 + 3 + 2 + 11 + 3
+const CHECKS := 240 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2 + 3 + 2 + 3 + 2 + 11 + 3
 
 ## Sections entered against sections that ran to their last line. A runtime error inside a section aborts that
 ## function and nothing says so; a section that bailed early after a failed guard counts as unfinished on purpose.
@@ -247,6 +247,31 @@ func _test_nav_smoothing() -> void:
 	_done()
 
 
+## Smoothing must not graze a corner closer than a body (0.32 m) even though a sample only has to be near a point.
+func _smoothing_keeps_a_body_off_corners() -> void:
+	var post := AABB(Vector3(-0.5, 0, -0.5), Vector3(1, 2, 1))
+	var builder := DotNpcNavBuilder.new()
+	builder.spacing = 1.0
+	builder.add_floor(AABB(Vector3(-6, 0, -6), Vector3(12, 0, 12)), 0.0)
+	builder.add_obstacle(post)
+	var graph := DotNpcNavGraph.new(builder.build(&"post", "digest"))
+	graph.straight_width_ratio = 0.5
+	var closest := INF
+	var paths := 0
+
+	for z in range(-4, 5):
+		var path := graph.find_smooth_path(Vector3(-4.5, 0, z + 0.3), Vector3(4.5, 0, -z - 0.3), 2.0)
+		paths += 1 if not path.is_empty() else 0
+
+		for k in path.size() - 1:
+			for i in 21:
+				var p := path[k].lerp(path[k + 1], i / 20.0)
+				var d := Vector2(maxf(absf(p.x) - 0.5, 0.0), maxf(absf(p.z) - 0.5, 0.0)).length()
+				closest = minf(closest, d)
+
+	_check(paths > 0 and closest >= 0.32, "a smoothed leg passes a corner at least a body away", "%d paths, closest %.2f" % [paths, closest])
+
+
 func _smoothing_around_wall(graph: DotNpcNavGraph, from: Vector3, to: Vector3) -> void:
 	# The one that matters. Smoothing is a shortcut and a shortcut through a wall is
 	# worse than the staircase it replaced.
@@ -286,6 +311,8 @@ func _smoothing_around_wall(graph: DotNpcNavGraph, from: Vector3, to: Vector3) -
 		"a remembered leg smooths a path as testing it again would",
 		"%d, %d, %d points" % [memo_first.size(), memo_again.size(), memo_off.size()]
 	)
+
+	_smoothing_keeps_a_body_off_corners()
 
 	var two := PackedVector3Array([from, to])
 	_check(
