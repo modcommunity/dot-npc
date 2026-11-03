@@ -619,7 +619,12 @@ func is_reachable(from: Vector3, to: Vector3, snap_radius: float = -1.0) -> bool
 ## Widest a straight-line sample may sit from a point that is missing grid neighbours (beside an obstacle or an
 ## edge), in grid cells. Points keep the build clearance from an obstacle, so a line 0.75 cell from such a point
 ## can graze the corner it stands beside; a point with every neighbour has no corner within reach.
-var straight_width_ratio: float = 0.75
+var straight_width_ratio: float = 0.75:
+	set(value):
+		if is_equal_approx(value, straight_width_ratio):
+			return
+		straight_width_ratio = value
+		_forget_legs()
 
 ## Neighbours a point has when every cell round it is walkable (the grid's eight).
 const FULL_NEIGHBOURS := 8
@@ -730,6 +735,15 @@ func _smooth(path: PackedVector3Array, corridor: float, lookahead: int, horizon:
 ## chasing one target smooths the same legs over and over; a subclass whose answer changes without
 ## the graph or the filter changing must turn this off.
 var memo_legs: bool = true
+
+## Drops every remembered leg: the answers depend on [member straight_width_ratio].
+func _forget_legs() -> void:
+	for key: String in _native:
+		var astar: AStar3D = _native[key]
+		for meta: StringName in astar.get_meta_list():
+			if String(meta).begins_with("dot_legs"):
+				astar.remove_meta(meta)
+
 
 ## Legs remembered per filter graph before the memo starts again, so it cannot grow without end.
 const LEG_MEMO_MAX := 40000

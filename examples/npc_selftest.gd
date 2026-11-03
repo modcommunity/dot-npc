@@ -5,7 +5,7 @@ extends "res://examples/selftest/replication_tests.gd"
 ## a graph that joins a walkway to the floor below, a reclaim that deletes what is chasing someone. Real nodes, real tree.
 
 
-const CHECKS := 240 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2 + 3 + 2 + 3 + 2 + 11 + 3
+const CHECKS := 240 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2 + 3 + 2 + 3 + 2 + 11 + 4
 
 ## Sections entered against sections that ran to their last line. A runtime error inside a section aborts that
 ## function and nothing says so; a section that bailed early after a failed guard counts as unfinished on purpose.
@@ -270,6 +270,22 @@ func _smoothing_keeps_a_body_off_corners() -> void:
 				closest = minf(closest, d)
 
 	_check(paths > 0 and closest >= 0.32, "a smoothed leg passes a corner at least a body away", "%d paths, closest %.2f" % [paths, closest])
+
+	# The leg memo must follow the ratio: a graph that smoothed at 0.75 and was then set to 0.5 answers as a fresh 0.5 one.
+	var warm := DotNpcNavGraph.new(builder.build(&"post", "digest"))
+	var fresh := DotNpcNavGraph.new(builder.build(&"post", "digest"))
+	fresh.straight_width_ratio = 0.5
+	var same := true
+
+	for z in range(-4, 5):
+		var a := Vector3(-4.5, 0, z + 0.3)
+		var b := Vector3(4.5, 0, -z - 0.3)
+		warm.straight_width_ratio = 0.75
+		warm.find_smooth_path(a, b, 2.0)
+		warm.straight_width_ratio = 0.5
+		same = same and warm.find_smooth_path(a, b, 2.0) == fresh.find_smooth_path(a, b, 2.0)
+
+	_check(same, "changing the straight-width ratio drops the remembered legs", "")
 
 
 func _smoothing_around_wall(graph: DotNpcNavGraph, from: Vector3, to: Vector3) -> void:
