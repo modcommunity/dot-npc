@@ -190,6 +190,12 @@ func _nav_builder_links() -> void:
 	_check(not sampled._crosses_obstacle(Vector3(-34.75, 2.89, 3.0), Vector3(-35.95, 3.39, 3.0)),
 		"and an edge clear of every box is kept")
 
+	# links_check_obstacles drops a link through a wall, but keeps one that is the only join (a door the floor plan needs).
+	var walled := _walled_link(false)
+	_check(walled.link_report().get("links", 0) == 0, "a link through an obstacle is kept when nothing else joins its floors")
+	var bypass := _walled_link(true)
+	_check(bypass.link_report().get("links", 0) == 1, "and dropped when the floors already join round the wall")
+
 
 ## Slope points, floors a gap apart and narrow walkways.
 func _nav_builder_slopes() -> void:
@@ -317,3 +323,18 @@ func _path_length(path: PackedVector3Array) -> float:
 	for i in range(path.size() - 1):
 		total += path[i].distance_to(path[i + 1])
 	return total
+
+
+## Two floors split by a wall, joined by one link through it; [param round_about] lays a third floor that joins them anyway.
+func _walled_link(round_about: bool) -> DotNpcNavBuilder:
+	var b := DotNpcNavBuilder.new()
+	b.spacing = 1.0
+	b.links_check_obstacles = true
+	b.add_floor(AABB(Vector3(-6, 0, -3), Vector3(5, 0, 7)), 0.0)
+	b.add_floor(AABB(Vector3(1, 0, -3), Vector3(5, 0, 7)), 0.0)
+	if round_about:
+		b.add_floor(AABB(Vector3(-6, 0, 3), Vector3(12, 0, 5)), 0.0)
+	b.add_obstacle(AABB(Vector3(-0.5, 0, -3), Vector3(1, 2, 6.5)))
+	b.add_link(Vector3(-1.5, 0, 0), Vector3(1.5, 0, 0))
+	b.build(&"walled", "digest")
+	return b

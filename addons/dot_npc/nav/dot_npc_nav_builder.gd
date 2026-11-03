@@ -34,8 +34,8 @@ var obstacle_under_feet: float = -1.0
 ## fit in the gap (a desk top on legs). Negative: the clearance, which lets a body walk under anything 0.35 m up.
 var obstacle_overhead: float = -1.0
 
-## Whether a link is dropped when the edge it makes, after each end snaps to its nearest point, runs through an obstacle.
-## Off: a link is trusted. A link drawn clear of a thin wall can still snap to points on both sides of it.
+## Whether a link whose snapped edge runs through an obstacle is dropped, unless it is the only join between its ends.
+## Off: every link is trusted. A link drawn clear of a thin wall can still snap to points on both sides of it.
 var links_check_obstacles: bool = false
 
 ## Metres within which two separate pieces of the graph are joined by their nearest pair of points, when
@@ -91,6 +91,7 @@ var _near := {}
 var _cover_normal := PackedVector3Array()
 var _cover_has := PackedByteArray()
 var _unlinked := 0
+var _deferred_links: Array = []
 var _unlinked_examples: Array[String] = []
 var _floor_index := 0
 var _column := NAN
@@ -216,6 +217,7 @@ func begin(map_id: StringName, digest: String) -> void:
 	_obstacle_cells.clear()
 	_cover_cells.clear()
 	_unlinked = 0
+	_deferred_links.clear()
 	_unlinked_examples = []
 	_floor_index = 0
 	_column = NAN
@@ -566,17 +568,9 @@ func _step_links() -> void:
 		var b := _link_end(pair, 1)
 
 		if a >= 0 and b >= 0 and a != b and links_check_obstacles and _crosses_obstacle(_positions[a], _positions[b]):
-			_unlinked += 1
-			if _unlinked_examples.size() < LINK_EXAMPLES:
-				_unlinked_examples.append("%s -> %s (obstacle)" % [pair[0], pair[1]])
+			_deferred_links.append([a, b, pair])
 		elif a >= 0 and b >= 0 and a != b:
-			_nav.connect_points(a, b)
-
-			# Flags are per point and a link is an edge, so the flags land on both ends.
-			var link_flags := int(pair[2]) if pair.size() > 2 else 0
-			if link_flags != 0:
-				_nav.add_flags(a, link_flags)
-				_nav.add_flags(b, link_flags)
+			_connect_link(a, b, pair)
 		else:
 			_unlinked += 1
 			if _unlinked_examples.size() < LINK_EXAMPLES:
@@ -584,6 +578,8 @@ func _step_links() -> void:
 
 		if (_cursor & 63) == 0 and _timed_out():
 			return
+
+	_keep_needed_deferred_links()
 
 	if _unlinked > 0 and log_summary:
 		var report := link_report()
@@ -598,6 +594,48 @@ func _step_links() -> void:
 
 	if _phase == Phase.DONE:
 		_finish()
+
+
+func _connect_link(a: int, b: int, pair: Array) -> void:
+	_nav.connect_points(a, b)
+
+	# Flags are per point and a link is an edge, so the flags land on both ends.
+	var link_flags := int(pair[2]) if pair.size() > 2 else 0
+	if link_flags != 0:
+		_nav.add_flags(a, link_flags)
+		_nav.add_flags(b, link_flags)
+
+
+## A link through an obstacle stays only when it is the one thing joining its two ends: a shortcut through a wall is dropped, a door or lift link the floor plan needs is trusted.
+func _keep_needed_deferred_links() -> void:
+	if _deferred_links.is_empty():
+		return
+
+	var parent := PackedInt32Array()
+	parent.resize(_positions.size())
+
+	for i in parent.size():
+		parent[i] = i
+
+	var edges := _nav.edges
+
+	for k in range(0, edges.size(), 2):
+		_join_pieces(parent, edges[k], edges[k + 1])
+
+	for d: Array in _deferred_links:
+		var a: int = d[0]
+		var b: int = d[1]
+		var pair: Array = d[2]
+
+		if _piece_of(parent, a) != _piece_of(parent, b):
+			_connect_link(a, b, pair)
+			_join_pieces(parent, a, b)
+		else:
+			_unlinked += 1
+			if _unlinked_examples.size() < LINK_EXAMPLES:
+				_unlinked_examples.append("%s -> %s (obstacle)" % [pair[0], pair[1]])
+
+	_deferred_links.clear()
 
 
 ## Joins the nearest pairs of points across pieces, shortest first, one join for each pair of pieces.
