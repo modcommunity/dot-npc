@@ -57,6 +57,11 @@ func _test_nav_data() -> void:
 	_check(bad_at == 1 and dg.bad_count() == 1 and around.has(Vector3(4, 0, -3)) and not around.has(Vector3(4, 0, 3)), "a point marked bad is gone round")
 	dg.expire_bad(11.0)
 	_check(dg.bad_count() == 0, "and forgiven when its time is up")
+
+	# Pruning: a point a callback calls blocked goes with its edges, an edge it calls blocked goes alone.
+	var dropped := diamond.prune(func(p: Vector3) -> bool: return p == Vector3(4, 0, 3), func(a: Vector3, b: Vector3) -> bool: return a == Vector3(0, 0, 0) and b == Vector3(4, 0, -3))
+	_check(dropped == Vector2i(1, 3) and diamond.point_count() == 3 and diamond.edge_count() == 1, "pruning drops a blocked point, its edges and a blocked edge")
+	_check(diamond.nearest_point(Vector3(8, 0, 0), 0.5) == 2 and DotNpcNavGraph.new(diamond).find_path(Vector3(4, 0, -3), Vector3(8, 0, 0), 1.0).size() >= 2, "and the rest is indexed and walkable")
 	_done()
 
 

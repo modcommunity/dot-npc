@@ -187,6 +187,52 @@ func connect_points(a: int, b: int) -> DotResult:
 	return DotResult.success(null)
 
 
+## Drops what a physics test says a body cannot stand in or walk through, and compacts the rest. The builder knows
+## the boxes it was given; a hull no box describes is what [param point_blocked] (`func(p: Vector3) -> bool`) and
+## [param edge_blocked] (`func(a: Vector3, b: Vector3) -> bool`) are for. Returns (points dropped, edges dropped).
+## Main thread only when the Callables query physics; run it before a [DotNpcNavGraph] is made from this.
+func prune(point_blocked: Callable, edge_blocked: Callable = Callable()) -> Vector2i:
+	normalise_arrays()
+	var remap := PackedInt32Array()
+	remap.resize(points.size())
+	var kept := PackedVector3Array()
+	var kept_areas := PackedInt32Array()
+	var kept_flags := PackedInt32Array()
+
+	for i in points.size():
+		if point_blocked.is_valid() and bool(point_blocked.call(points[i])):
+			remap[i] = -1
+			continue
+
+		remap[i] = kept.size()
+		kept.append(points[i])
+		kept_areas.append(areas[i])
+		kept_flags.append(flags[i])
+
+	var kept_edges := PackedInt32Array()
+
+	for k in range(0, edges.size(), 2):
+		var a := remap[edges[k]]
+		var b := remap[edges[k + 1]]
+
+		if a < 0 or b < 0:
+			continue
+
+		if edge_blocked.is_valid() and bool(edge_blocked.call(points[edges[k]], points[edges[k + 1]])):
+			continue
+
+		kept_edges.append(a)
+		kept_edges.append(b)
+
+	var dropped := Vector2i(points.size() - kept.size(), (edges.size() - kept_edges.size()) / 2)
+	points = kept
+	areas = kept_areas
+	flags = kept_flags
+	edges = kept_edges
+	invalidate_index()
+	return dropped
+
+
 ## The nearest walkable point to [param p], or -1 when none is within [param radius].
 ## Through a bucket index, not a scan: every path request and walkability sample asks this. Ties
 ## go to the lowest index, so two machines never path differently depending on index layout.
