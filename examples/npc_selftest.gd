@@ -156,6 +156,11 @@ func _test_nav_at_scale() -> void:
 
 	_check(not walled, "and no step of it goes through a block")
 
+	_nav_scale_native_vs_script(nav, graph, rng)
+	_done()
+
+
+func _nav_scale_native_vs_script(nav: DotNpcNavData, graph: DotNpcNavGraph, rng: RandomNumberGenerator) -> void:
 	# The native search (AStar3D) against the script A* it replaced: same path length for random pairs, with and
 	# without a filter that makes some ground dearer, and much faster. Same length, not same points (equal-cost routes tie).
 	var script_graph := DotNpcNavGraph.new(nav)
@@ -186,7 +191,6 @@ func _test_nav_at_scale() -> void:
 
 	_check(longer == 0, "the native search finds paths as short as the script A*", "%d of 40 differ" % longer)
 	_check(native_us * 4 < script_us, "and at a fraction of the cost", "%d us against %d us" % [native_us, script_us])
-	_done()
 
 
 func _test_nav_smoothing() -> void:
@@ -239,6 +243,11 @@ func _test_nav_smoothing() -> void:
 		"%d raw, %d with a horizon of 3, %d smoothed" % [raw.size(), head.size(), smooth.size()]
 	)
 
+	_smoothing_around_wall(graph, from, to)
+	_done()
+
+
+func _smoothing_around_wall(graph: DotNpcNavGraph, from: Vector3, to: Vector3) -> void:
 	# The one that matters. Smoothing is a shortcut and a shortcut through a wall is
 	# worse than the staircase it replaced.
 	var wall := AABB(Vector3(-2, 0, -12), Vector3(4, 4, 20))
@@ -283,7 +292,6 @@ func _test_nav_smoothing() -> void:
 		graph.smooth_path(two).size() == 2,
 		"a path with nothing to remove comes back unchanged"
 	)
-	_done()
 
 
 func _test_nav_filter() -> void:
@@ -352,6 +360,11 @@ func _test_nav_filter() -> void:
 		"and it wades when the detour is worse than the crossing"
 	)
 
+	_nav_filter_flags(from, to)
+	_done()
+
+
+func _nav_filter_flags(from: Vector3, to: Vector3) -> void:
 	# Flags are the other half: impassable rather than expensive.
 	var crouch_builder := DotNpcNavBuilder.new()
 	crouch_builder.spacing = 2.0
@@ -388,7 +401,6 @@ func _test_nav_filter() -> void:
 		not DotNpcNavFilter.neutral().duplicate_filter().is_neutral() == false,
 		"a filter can be copied"
 	)
-	_done()
 
 
 func _test_senses_basics() -> void:
@@ -442,6 +454,11 @@ func _test_senses_basics() -> void:
 		"and one of a quarter does not see what the kind would"
 	)
 
+	await _senses_on_floor(senses)
+	_done()
+
+
+func _senses_on_floor(senses: DotNpcSenses) -> void:
 	# Standing on a real floor, with line of sight on: the sight line must not start at the feet, ON the floor,
 	# or every NPC on a floor is blind.
 	var ground := StaticBody3D.new()
@@ -471,7 +488,6 @@ func _test_senses_basics() -> void:
 	_check(not senses.perceives(behind_wall, _candidate(&"a", Vector3(8, 1, -10))),
 		"and not through a wall")
 	ground.queue_free()
-	_done()
 
 
 func _test_spawner_pathing() -> void:
