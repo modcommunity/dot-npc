@@ -34,6 +34,10 @@ var obstacle_under_feet: float = -1.0
 ## fit in the gap (a desk top on legs). Negative: the clearance, which lets a body walk under anything 0.35 m up.
 var obstacle_overhead: float = -1.0
 
+## Whether a link is dropped when the edge it makes, after each end snaps to its nearest point, runs through an obstacle.
+## Off: a link is trusted. A link drawn clear of a thin wall can still snap to points on both sides of it.
+var links_check_obstacles: bool = false
+
 ## Metres within which two separate pieces of the graph are joined by their nearest pair of points, when
 ## that pair is within a step in height and nothing solid is between. Zero is off. For a floor plan whose
 ## rooms stop a metre short of each other (a threshold, a wall's thickness) and would be islands.
@@ -561,7 +565,11 @@ func _step_links() -> void:
 		var a := _link_end(pair, 0)
 		var b := _link_end(pair, 1)
 
-		if a >= 0 and b >= 0 and a != b:
+		if a >= 0 and b >= 0 and a != b and links_check_obstacles and _crosses_obstacle(_positions[a], _positions[b]):
+			_unlinked += 1
+			if _unlinked_examples.size() < LINK_EXAMPLES:
+				_unlinked_examples.append("%s -> %s (obstacle)" % [pair[0], pair[1]])
+		elif a >= 0 and b >= 0 and a != b:
 			_nav.connect_points(a, b)
 
 			# Flags are per point and a link is an edge, so the flags land on both ends.
