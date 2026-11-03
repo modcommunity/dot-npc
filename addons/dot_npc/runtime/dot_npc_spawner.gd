@@ -92,9 +92,6 @@ var seed_source: Callable = Callable()
 ## Navigation for the map currently loaded, or null for a game that paths its own way.
 var nav: DotNpcNavGraph = null
 
-## def id -> DotNpcNavFilter, built on first use. See [method _filter_for].
-var _nav_filters: Dictionary = {}
-
 ## Path -> the scene or brain script loaded from it, held for as long as the spawner lives.
 ## See [method warm].
 var _held: Dictionary = {}
@@ -111,8 +108,6 @@ var sense_workers: int = 0
 
 ## NPCs ranked per worker task: fewer, larger tasks keep the fork cheap.
 const SENSE_CHUNK := 16
-
-var _packed := DotNpcSenses.Packed.new()
 
 ## How far a goal may move before a path is recomputed, in metres.
 var repath_drift: float = 2.5
@@ -133,9 +128,9 @@ var repath_interval_per_m: float = 0.0
 ## so that think follows the old path. A host copies dot-server's `sv_threads_npc` here.
 var path_workers: int = 0
 
-## [DotNpcPath, DotNpcNavGraph.PathQuery, goal] per queued repath, in the order asked.
-var _path_queue: Array = []
-var _path_pending: Dictionary = {}
+var _pathing := DotNpcPathing.new(self)
+var _perception := DotNpcPerception.new(self)
+var _spawning := DotNpcSpawning.new(self)
 
 ## Instance id -> DotNpcInstance.
 var _npcs: Dictionary = {}
@@ -168,9 +163,6 @@ var _world: Node = null
 
 var spawn_count: int = 0
 
-## Spawns adopted so far, the fallback subject of [method seed_for]. Never reset, so a
-## second round on the same spawner does not replay the first round's choices.
-var _spawn_serial: int = 0
 var refusal_count: int = 0
 var kill_count: int = 0
 var reclaim_count: int = 0
@@ -194,13 +186,11 @@ func _ready() -> void:
 		DotLog.warn(CHANNEL, "npc limits are not usable", {"why": valid.error.message})
 
 
-
 ## Adopts navigation for the map now loaded. Null clears it.
 ## Called on every map change: navigation is per map, and a stale graph walks NPCs through walls,
 ## which is worse than none.
 func set_nav_data(data: DotNpcNavData) -> DotResult:
-	_path_queue.clear()
-	_path_pending.clear()
+	_pathing.reset()
 
 	if data == null:
 		nav = null
@@ -238,104 +228,13 @@ func has_nav() -> bool:
 ## Called by [DotNpcBrain.steer_along_path]. Recomputes the path when drifted or expired, and returns
 ## the goal itself when there is no navigation, which is the documented fallback.
 func path_toward(npc: DotNpcInstance, path: DotNpcPath, goal: Vector3) -> Vector3:
-	if not has_nav() or npc == null or not npc.is_alive() or path == null:
-		return goal
-
-	var drift := repath_drift
-	var interval := repath_interval
-
-	if repath_drift_ratio > 0.0 or repath_interval_per_m > 0.0:
-		var gap := npc.position().distance_to(goal)
-		drift = maxf(drift, repath_drift_ratio * gap)
-		interval = maxf(interval, repath_interval_per_m * gap)
-
-	var due := path.needs_repath(_now, goal, interval, drift)
-
-	if due and DotParallel.resolve_workers(path_workers) > 0:
-		_queue_path(npc, path, goal)
-	elif due:
-				# The filter is set per search, not held on the graph: one graph serves every NPC and a
-				# thing that cannot crouch asks a different question of the same points.
-		nav.filter = _filter_for(npc.def)
-
-		var found := (
-			nav.find_smooth_path(
-				npc.position(), goal, limits.spawn_snap_radius, allow_partial_paths, smooth_horizon
-			) if smooth_paths and not path.is_rough(_now)
-			else nav.find_path(
-				npc.position(), goal, limits.spawn_snap_radius, allow_partial_paths
-			)
-		)
-
-		path.set_points(found, _now, goal)
-		path.partial = nav.last_partial
-
-	if path.is_empty():
-		return goal
-
-	return path.advance(npc.position(), goal)
-
-
-func _queue_path(npc: DotNpcInstance, path: DotNpcPath, goal: Vector3) -> void:
-	var key := path.get_instance_id()
-
-	if _path_pending.has(key):
-		return
-
-	_path_pending[key] = true
-	var q := DotNpcNavGraph.PathQuery.new()
-	q.from = npc.position()
-	q.to = goal
-	q.filter = _filter_for(npc.def)
-	q.snap_radius = limits.spawn_snap_radius
-	q.allow_partial = allow_partial_paths
-	q.smooth = smooth_paths and not path.is_rough(_now)
-	q.horizon = smooth_horizon
-	_path_queue.append([path, q, goal])
+	return _pathing.path_toward(npc, path, goal)
 
 
 ## Answers every repath queued this tick, on [member path_workers]; [method tick] calls it after
 ## the brains think. The paths get exactly what an inline search would have given them.
 func answer_paths() -> void:
-	if _path_queue.is_empty():
-		return
-
-	var queue := _path_queue
-	_path_queue = []
-	_path_pending.clear()
-
-	if not has_nav():
-		return
-
-	var queries: Array = []
-
-	for entry: Array in queue:
-		queries.append(entry[1])
-
-	nav.find_paths(queries, path_workers)
-
-	for entry: Array in queue:
-		var path: DotNpcPath = entry[0]
-		var q: DotNpcNavGraph.PathQuery = entry[1]
-		path.set_points(q.points, _now, entry[2])
-		path.partial = q.partial
-
-
-## The navigation filter for one kind of NPC, built once and kept.
-## Cached because it is otherwise rebuilt on every repath, for contents that never change after load.
-func _filter_for(def: DotNpcDef) -> DotNpcNavFilter:
-	if def == null or def.nav_exclude_flags == 0:
-		return null
-
-	if _nav_filters.has(def.id):
-		return _nav_filters[def.id]
-
-	var filter := DotNpcNavFilter.new()
-	filter.exclude_flags = def.nav_exclude_flags
-	_nav_filters[def.id] = filter
-
-	return filter
-
+	_pathing.answer()
 
 
 ## What the NPCs may perceive this tick. Called by the host before [method tick].
@@ -374,7 +273,6 @@ func candidates() -> Array:
 	return _candidates
 
 
-
 ## One simulated tick: perceive, think, reclaim.
 ## Perception first so a brain thinks about this tick's world; reclaim last so an NPC that acquired
 ## a target this tick is not reclaimed for having had none.
@@ -385,80 +283,9 @@ func tick(delta: float) -> void:
 	_now += delta
 	_ticks += 1
 
-	_perceive()
+	_perception.perceive()
 	_think(delta)
-	_reclaim()
-
-
-func _perceive() -> void:
-	if senses == null or limits == null:
-		return
-
-	var period := maxi(limits.sense_period_ticks, 1)
-	var quiet_period := period * maxi(limits.sense_quiet_mult, 1)
-	var slot := 0
-	var due: Array[DotNpcInstance] = []
-
-	for id in _npcs:
-		var npc: DotNpcInstance = _npcs[id]
-
-		if not npc.is_alive():
-			continue
-
-		# Staggered by dictionary position, never instance id: ids of one wave are consecutive
-		# and would put the whole wave on the same tick.
-		slot += 1
-
-		var every := quiet_period if npc.sense_quiet and not npc.has_target() else period
-
-		if (slot + _ticks) % every != 0 or npc.def == null:
-			continue
-
-		due.append(npc)
-
-	if due.is_empty():
-		return
-
-	_packed.fill(_candidates)
-	var n := due.size()
-	var here := PackedVector3Array()
-	var sight := PackedFloat64Array()
-	var hearing := PackedFloat64Array()
-	var own := PackedInt32Array()
-	here.resize(n)
-	sight.resize(n)
-	hearing.resize(n)
-	own.resize(n)
-
-	for i in n:
-		var npc := due[i]
-		here[i] = npc.position()
-		sight[i] = DotNpcSenses.reach_of(npc)
-		hearing[i] = npc.def.hearing_range
-		own[i] = _packed.faction_of(npc.def.faction)
-
-	var cap := limits.sense_candidate_cap
-	var positions := _packed.positions
-	var loudness := _packed.loudness
-	var factions := _packed.factions
-	var chunks := ceili(float(n) / SENSE_CHUNK)
-	var task := func(c: int) -> Array:
-		return DotNpcSenses.rank_many(c * SENSE_CHUNK, mini(n, (c + 1) * SENSE_CHUNK),
-			here, sight, hearing, own, positions, loudness, factions, cap)
-	var ranked := DotParallel.run(task, chunks, &"npc.senses", sense_workers)
-
-	for c in chunks:
-		var orders: Array = ranked[c]
-
-		for k in orders.size():
-			var npc := due[c * SENSE_CHUNK + k]
-			var before := npc.target_id
-			npc.sense_quiet = orders[k].is_empty()
-			var after := senses.decide(npc, _candidates, orders[k],
-				_packed.index_of(npc.target_id), _now)
-
-			if after != before:
-				target_changed.emit(npc, after)
+	_perception.reclaim()
 
 
 func _think(delta: float) -> void:
@@ -482,48 +309,6 @@ func _think(delta: float) -> void:
 	answer_paths()
 
 
-func _reclaim() -> void:
-	if limits == null or limits.reclaim_distance <= 0.0:
-		return
-
-	if _candidates.is_empty():
-		# Nobody to be far from. Reclaiming here would empty a server the moment its
-		# last player disconnected, and a dedicated server between rounds is exactly
-		# that — with the wave it is about to hand the next player already spawned.
-		return
-
-	var ids: Array = _npcs.keys()
-	var limit_sq := limits.reclaim_distance * limits.reclaim_distance
-
-	for id in ids:
-		var found: Variant = _npcs.get(id)
-
-		if not (found is DotNpcInstance):
-			continue
-
-		var npc: DotNpcInstance = found
-
-		if not npc.is_alive() or npc.has_target():
-			continue
-
-		if _now - npc.engaged_at < limits.reclaim_grace:
-			continue
-
-		var nearest_sq := INF
-		var position := npc.position()
-
-		for entry in _candidates:
-			var cand := entry as DotNpcSenses.Candidate
-
-			if cand != null:
-				nearest_sq = minf(nearest_sq, position.distance_squared_to(cand.position))
-
-		if nearest_sq > limit_sq:
-			reclaim_count += 1
-			remove(npc.instance_id, REASON_RECLAIMED)
-
-
-
 ## Spawns one NPC. Null on refusal, with [signal refused] emitted.
 func spawn(
 	npc_id: StringName,
@@ -531,24 +316,7 @@ func spawn(
 	owner_id: StringName = &"",
 	orientation: Basis = Basis.IDENTITY
 ) -> DotNpcInstance:
-	var prepared := _prepare(npc_id, at, owner_id)
-
-	if prepared.is_empty():
-		return null
-
-	var def: DotNpcDef = prepared[0]
-	var node: Node = prepared[1]
-	var placed: Vector3 = prepared[2]
-
-	if not (node is Node3D):
-		node.queue_free()
-		_refuse(owner_id, npc_id, "That NPC's scene is not a Node3D.")
-		return null
-
-	var body := node as Node3D
-	body.global_transform = Transform3D(orientation, placed)
-
-	return _adopt(def, body, owner_id)
+	return _spawning.spawn(npc_id, at, owner_id, orientation)
 
 
 ## The same spawn, into a 2D world.
@@ -560,145 +328,14 @@ func spawn_2d(
 	owner_id: StringName = &"",
 	rotation: float = 0.0
 ) -> DotNpcInstance:
-	var prepared := _prepare(npc_id, DotNpcInstance.to_plane(at), owner_id)
-
-	if prepared.is_empty():
-		return null
-
-	var def: DotNpcDef = prepared[0]
-	var node: Node = prepared[1]
-	var placed: Vector3 = prepared[2]
-
-	if not (node is Node2D):
-		node.queue_free()
-		_refuse(owner_id, npc_id, "That NPC's scene is not a Node2D.")
-		return null
-
-	var body := node as Node2D
-	body.position = DotNpcInstance.from_plane(placed)
-	body.rotation = rotation
-
-	return _adopt(def, body, owner_id)
-
-
-## Everything both spawns do before the node exists: the checks, the placement, and the
-## instantiation. Returns `[def, node, placed_position]` or an empty array on a refusal.
-func _prepare(npc_id: StringName, at: Vector3, owner_id: StringName) -> Array:
-	if not authoritative:
-		_refuse(owner_id, npc_id, "This client may not spawn NPCs.")
-		return []
-
-	if catalogue == null:
-		_refuse(owner_id, npc_id, "This server has no NPC catalogue.")
-		return []
-
-	var def := catalogue.get_npc(npc_id)
-
-	if def == null or not def.enabled:
-		_refuse(owner_id, npc_id, "No such NPC.")
-		return []
-
-	var allowed := may_spawn(def, owner_id)
-
-	if not allowed.ok:
-		_refuse(owner_id, npc_id, allowed.error.message)
-		return []
-
-	var placement := place(at)
-
-	if not placement.ok:
-		_refuse(owner_id, npc_id, placement.error.message)
-		return []
-
-	if not _held.has(def.scene_path) and not ResourceLoader.exists(def.scene_path):
-		# Distinguished from "no such NPC" because the two need different fixes: this
-		# one is a pack that is not mounted, and telling an operator "no such NPC"
-		# sends them to edit a catalogue that is already right.
-		_refuse(owner_id, npc_id, "That NPC's content is not loaded on this server.")
-		return []
-
-	var scene: Resource = _resource(def.scene_path)
-
-	if not (scene is PackedScene):
-		_refuse(owner_id, npc_id, "That NPC's scene is not a PackedScene.")
-		return []
-
-	return [def, (scene as PackedScene).instantiate(), placement.value]
-
-
-## Puts a placed node into the world and into the books, and gives it its brain.
-## The world is resolved here, after the node exists, in a way that does not leak the instantiated
-## scene when the world cannot be resolved.
-func _adopt(def: DotNpcDef, body: Node, owner_id: StringName) -> DotNpcInstance:
-	var resolved := _resolve_world()
-
-	if not resolved.ok:
-		body.queue_free()
-		_refuse(owner_id, def.id, resolved.error.message)
-		return null
-
-	(resolved.value as Node).add_child(body)
-
-	var npc := DotNpcInstance.new()
-	npc.def = def
-	npc.node = body
-	npc.instance_id = body.get_instance_id()
-	npc.owner_id = owner_id
-	npc.spawned_at = _now
-	npc.engaged_at = _now
-	npc.health = def.max_health
-
-	npc.seed = _seed_npc(npc)
-
-	_npcs[npc.instance_id] = npc
-	_by_kind[def.id] = int(_by_kind.get(def.id, 0)) + 1
-
-	if not _by_owner.has(owner_id):
-		_by_owner[owner_id] = []
-
-	(_by_owner[owner_id] as Array).append(npc.instance_id)
-
-	_last_spawn[owner_id] = _now
-	spawn_count += 1
-
-	var attached := attach_brain(npc)
-
-	if not attached.ok:
-				# The NPC still exists: deleting one whose brain would not load hides which script is broken,
-				# and an inert NPC is something an operator can see and name beside the log line.
-		DotLog.warn(CHANNEL, "an NPC spawned without its brain", {
-			"npc": String(def.id),
-			"why": attached.error.message,
-		})
-
-	spawned.emit(npc)
-
-	return npc
+	return _spawning.spawn_2d(npc_id, at, owner_id, rotation)
 
 
 ## The seed an NPC gets for [param subject], a stable per-spawn number. Above 1, always.
 ## Two stream names, so the game's number 5 and this spawner's fifth spawn are different seeds
 ## when seed_source answers for some NPCs and not others.
 func seed_for(subject: int, from_game: bool = false) -> int:
-	var stream := DotRandomStream.new(seed_base).stream_for(
-		&"npc_id" if from_game else &"npc", subject
-	)
-
-	# 2..2^31-1: positive and small enough to survive a float, and never 0 or 1, which
-	# dot-npc-ai reads as "this character still has the preset's seed".
-	return stream.range_i_at(0, 2, 0x7FFFFFFF)
-
-
-func _seed_npc(npc: DotNpcInstance) -> int:
-	_spawn_serial += 1
-
-	if seed_source.is_valid():
-		var given: Variant = seed_source.call(npc)
-
-		if (given is int) and int(given) != 0:
-			return seed_for(int(given), true)
-
-	return seed_for(_spawn_serial)
+	return _spawning.seed_for(subject, from_game)
 
 
 ## Spawns up to [param count] of one kind around [param at]. Returns what was made.
@@ -710,125 +347,30 @@ func spawn_group(
 	spread: float = 3.0,
 	owner_id: StringName = &""
 ) -> Array[DotNpcInstance]:
-	var out: Array[DotNpcInstance] = []
-	var wanted := count if limits == null else mini(count, limits.burst_cap)
-
-	for i in wanted:
-				# A deterministic ring, not random jitter: two servers replaying the same decisions place a
-				# wave identically, which makes a horde reproducible in a suite.
-		var angle := TAU * float(i) / float(maxi(wanted, 1))
-		var offset := Vector3(cos(angle), 0.0, sin(angle)) * spread
-		var made := spawn_2d(npc_id, DotNpcInstance.from_plane(at + offset), owner_id) \
-			if two_dimensional else spawn(npc_id, at + offset, owner_id)
-
-		if made != null:
-			out.append(made)
-
-	return out
+	return _spawning.spawn_group(npc_id, at, count, spread, owner_id)
 
 
 ## Whether one more of [param def] may exist right now.
 func may_spawn(def: DotNpcDef, owner_id: StringName = &"") -> DotResult:
-	if limits == null:
-		return DotResult.success(null)
-
-	if limits.spawn_interval > 0.0 and _last_spawn.has(owner_id):
-		var elapsed := _now - float(_last_spawn[owner_id])
-
-		if elapsed < limits.spawn_interval:
-			return DotResult.fail(
-				DotError.CODE_RATE_LIMITED,
-				"Spawning too fast.",
-				"%.2f s of %.2f s" % [elapsed, limits.spawn_interval]
-			)
-
-	if limits.world_budget > 0 and world_cost() + def.cost > limits.world_budget:
-		return DotResult.fail(
-			DotError.CODE_QUOTA,
-			"The world is at its NPC budget.",
-			"%d of %d" % [world_cost(), limits.world_budget]
-		)
-
-	if limits.per_kind_cap > 0 and count_of(def.id) >= limits.per_kind_cap:
-		return DotResult.fail(
-			DotError.CODE_QUOTA,
-			"There are already as many of those as this server allows.",
-			"%d of %d" % [count_of(def.id), limits.per_kind_cap]
-		)
-
-	return DotResult.success(null)
+	return _spawning.may_spawn(def, owner_id)
 
 
 ## Where an NPC asked for at [param at] would actually stand.
 ## Separate from [method spawn] so a director can ask first: a wave with three legal positions of eight
 ## should spawn three, not eight in a wall.
 func place(at: Vector3) -> DotResult:
-	if limits == null or not limits.require_navigable_spawn:
-		return DotResult.success(at)
-
-	if not has_nav():
-				# No navigation is not "off the navigation": a game that paths its own way has no DotNpcNavData and
-				# every spawn point is legal. Refusing would make `require_navigable_spawn` mean "refuse every
-				# spawn on a map with no nav data".
-		return DotResult.success(at)
-
-		# Asked for the INDEX, not the snapped position: `snap()` returns its input when nothing is within
-		# the radius, and the distance from a point to itself is zero, so a spawn two hundred metres off
-		# the graph measured as perfect.
-	var index := nav.data.nearest_point(at, limits.spawn_snap_radius)
-
-	if index < 0:
-		return DotResult.fail(
-			DotError.CODE_INVALID,
-			"There is nowhere to stand there.",
-			"nothing navigable within %.1f m" % limits.spawn_snap_radius
-		)
-
-	return DotResult.success(nav.data.points[index])
+	return _spawning.place(at)
 
 
 ## Builds and attaches the brain named by the definition.
 ## Loaded by path, as in [DotNpcBrain]: a class_name cannot be resolved inside a mounted pack.
 func attach_brain(npc: DotNpcInstance) -> DotResult:
-	if npc == null or npc.def == null:
-		return DotResult.fail(DotError.CODE_INVALID, "No NPC to give a brain to.")
-
-	if npc.def.brain_script_path == "":
-		return DotResult.success(null)
-
-	if not _held.has(npc.def.brain_script_path) and not ResourceLoader.exists(npc.def.brain_script_path):
-		return DotResult.fail(
-			DotError.CODE_IO, "That brain script is not here.",
-			npc.def.brain_script_path
-		)
-
-	var script: Resource = _resource(npc.def.brain_script_path)
-
-	if not (script is GDScript):
-		return DotResult.fail(
-			DotError.CODE_INVALID, "That brain is not a GDScript.",
-			npc.def.brain_script_path
-		)
-
-	var made: Variant = (script as GDScript).new()
-
-	if not (made is DotNpcBrain):
-		return DotResult.fail(
-			DotError.CODE_INVALID,
-			"A brain must extend dot_npc_brain.gd.",
-			npc.def.brain_script_path
-		)
-
-	npc.brain = made
-	(made as DotNpcBrain).bind(npc, self)
-
-	return DotResult.success(made)
+	return _spawning.attach_brain(npc)
 
 
 func _refuse(owner_id: StringName, npc_id: StringName, reason: String) -> void:
 	refusal_count += 1
 	refused.emit(owner_id, npc_id, reason)
-
 
 
 ## Hurts an NPC. Returns how much health it actually lost.
@@ -895,7 +437,6 @@ func heal(instance_id: int, amount: float) -> float:
 	npc.health = minf(npc.health + amount, npc.def.max_health)
 
 	return npc.health - before
-
 
 
 func remove(instance_id: int, reason: StringName = REASON_ADMIN) -> bool:
@@ -1043,7 +584,6 @@ func owner_left(owner_id: StringName) -> int:
 		return 0
 
 	return clear_owner(owner_id, REASON_LEFT)
-
 
 
 func get_npc(instance_id: int) -> DotNpcInstance:
