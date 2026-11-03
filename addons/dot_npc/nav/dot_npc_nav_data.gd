@@ -210,15 +210,21 @@ func prune(point_blocked: Callable, edge_blocked: Callable = Callable()) -> Vect
 		kept_flags.append(flags[i])
 
 	var kept_edges := PackedInt32Array()
+	var cut := PackedVector3Array()
 
 	for k in range(0, edges.size(), 2):
 		var a := remap[edges[k]]
 		var b := remap[edges[k + 1]]
 
 		if a < 0 or b < 0:
+			if a >= 0 or b >= 0:
+				cut.append(points[edges[k]])
+				cut.append(points[edges[k + 1]])
 			continue
 
 		if edge_blocked.is_valid() and bool(edge_blocked.call(points[edges[k]], points[edges[k + 1]])):
+			cut.append(points[edges[k]])
+			cut.append(points[edges[k + 1]])
 			continue
 
 		kept_edges.append(a)
@@ -229,8 +235,28 @@ func prune(point_blocked: Callable, edge_blocked: Callable = Callable()) -> Vect
 	areas = kept_areas
 	flags = kept_flags
 	edges = kept_edges
+	remember_cut_edges(cut)
 	invalidate_index()
 	return dropped
+
+
+## Segments (two points each) of edges [method prune] cut, including those to a point it removed, in [member meta]
+## so they survive the cache. [method DotNpcNavGraph.can_walk_straight] refuses a line across one.
+func cut_edges() -> PackedVector3Array:
+	var found: Variant = meta.get(CUT_KEY)
+	return found if found is PackedVector3Array else PackedVector3Array()
+
+
+func remember_cut_edges(segments: PackedVector3Array) -> void:
+	if segments.is_empty():
+		return
+
+	var all := cut_edges()
+	all.append_array(segments)
+	meta[CUT_KEY] = all
+
+
+const CUT_KEY := "cut_edges"
 
 
 ## The nearest walkable point to [param p], or -1 when none is within [param radius].

@@ -99,6 +99,8 @@ func _init(p_data: DotNpcNavData = null) -> void:
 func rebuild(p_data: DotNpcNavData) -> DotResult:
 	data = p_data
 	_adjacency.clear()
+	_cut_index.clear()
+	_cut_indexed = false
 
 	if data == null:
 		return DotResult.fail(DotError.CODE_INVALID, "No navigation data.")
@@ -647,6 +649,9 @@ func can_walk_straight(a: Vector3, b: Vector3, corridor: float = -1.0) -> bool:
 	if distance <= 0.001:
 		return true
 
+	if _crosses_cut(a, b):
+		return false
+
 		# Connectivity, not proximity: "every sample is near some point" passes through a wall thin enough
 		# to have points on both sides. The builder refused to connect points across an obstacle, so ask
 		# whether the line stays inside the edges it drew; that is exact rather than a threshold.
@@ -676,6 +681,79 @@ func can_walk_straight(a: Vector3, b: Vector3, corridor: float = -1.0) -> bool:
 		previous = current
 
 	return true
+
+
+var _cut_index: Dictionary = {}
+var _cut_indexed := false
+
+
+## Whether the line a to b crosses an edge the data's prune cut (physics said a body cannot use it).
+## Indexed by cell on first use; a line only meets the segments in the cells it passes through.
+func _crosses_cut(a: Vector3, b: Vector3) -> bool:
+	if not _cut_indexed:
+		_cut_indexed = true
+		var all := data.cut_edges()
+
+		for k in range(0, all.size() - 1, 2):
+			var key := _cut_cell((all[k] + all[k + 1]) * 0.5)
+			var list: Array = _cut_index.get(key, [])
+			list.append(k)
+			_cut_index[key] = list
+
+	if _cut_index.is_empty():
+		return false
+
+	var cut := data.cut_edges()
+	var cell := _cut_size()
+	var steps := maxi(int(ceil(a.distance_to(b) / cell)), 1)
+	var seen: Dictionary = {}
+
+	for i in steps + 1:
+		var at := a.lerp(b, float(i) / steps)
+		var home := _cut_cell(at)
+
+		for dx in range(-1, 2):
+			for dz in range(-1, 2):
+				var key := Vector2i(home.x + dx, home.y + dz)
+
+				if seen.has(key):
+					continue
+
+				seen[key] = true
+
+				for k: int in _cut_index.get(key, []):
+					if _segments_cross(a, b, cut[k], cut[k + 1]):
+						return true
+
+	return false
+
+
+func _cut_size() -> float:
+	return maxf(data.grid_spacing * 2.0, 1.0)
+
+
+func _cut_cell(p: Vector3) -> Vector2i:
+	var size := _cut_size()
+	return Vector2i(floori(p.x / size), floori(p.z / size))
+
+
+## Whether two segments cross in the ground plane at heights within a metre of each other.
+static func _segments_cross(a: Vector3, b: Vector3, c: Vector3, d: Vector3) -> bool:
+	var r := Vector2(b.x - a.x, b.z - a.z)
+	var s := Vector2(d.x - c.x, d.z - c.z)
+	var denom := r.cross(s)
+
+	if absf(denom) < 0.00001:
+		return false
+
+	var ca := Vector2(c.x - a.x, c.z - a.z)
+	var t := ca.cross(s) / denom
+	var u := ca.cross(r) / denom
+
+	if t < 0.0 or t > 1.0 or u < 0.0 or u > 1.0:
+		return false
+
+	return absf(lerpf(a.y, b.y, t) - lerpf(c.y, d.y, u)) < 1.0
 
 
 func _sample_clear(at: Vector3, point: int) -> bool:

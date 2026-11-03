@@ -62,6 +62,9 @@ func _test_nav_data() -> void:
 	var dropped := diamond.prune(func(p: Vector3) -> bool: return p == Vector3(4, 0, 3), func(a: Vector3, b: Vector3) -> bool: return a == Vector3(0, 0, 0) and b == Vector3(4, 0, -3))
 	_check(dropped == Vector2i(1, 3) and diamond.point_count() == 3 and diamond.edge_count() == 1, "pruning drops a blocked point, its edges and a blocked edge")
 	_check(diamond.nearest_point(Vector3(8, 0, 0), 0.5) == 2 and DotNpcNavGraph.new(diamond).find_path(Vector3(4, 0, -3), Vector3(8, 0, 0), 1.0).size() >= 2, "and the rest is indexed and walkable")
+	var cut_graph := DotNpcNavGraph.new(diamond)
+	_check(diamond.cut_edges().size() == 6, "pruning remembers the three edges it cut", "%d" % diamond.cut_edges().size())
+	_check(cut_graph._crosses_cut(Vector3(0, 0, -3), Vector3(4, 0, 0)) and not cut_graph._crosses_cut(Vector3(5, 0, -3), Vector3(8, 0, -1)), "and a leg across one is refused while a leg elsewhere is not")
 	_done()
 
 
