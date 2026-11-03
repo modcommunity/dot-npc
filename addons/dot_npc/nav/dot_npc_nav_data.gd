@@ -252,9 +252,14 @@ func points_within(p: Vector3, radius: float) -> PackedInt32Array:
 	_ensure_index()
 
 	var cell := _bucket_size
+	# Clamped to the occupied buckets: a huge radius must not walk billions of empty cells.
+	var x0 := maxi(floori((p.x - radius) / cell), _bucket_min.x)
+	var x1 := mini(floori((p.x + radius) / cell), _bucket_max.x)
+	var z0 := maxi(floori((p.z - radius) / cell), _bucket_min.y)
+	var z1 := mini(floori((p.z + radius) / cell), _bucket_max.y)
 
-	for bx in range(floori((p.x - radius) / cell), floori((p.x + radius) / cell) + 1):
-		for bz in range(floori((p.z - radius) / cell), floori((p.z + radius) / cell) + 1):
+	for bx in range(x0, x1 + 1):
+		for bz in range(z0, z1 + 1):
 			var bucket: Variant = _buckets.get(Vector2i(bx, bz))
 
 			if bucket == null:
@@ -285,6 +290,8 @@ func invalidate_index() -> void:
 ## of it would be a second list that can fall out of step with the first.
 var _buckets: Dictionary = {}
 var _bucket_size: float = 4.0
+var _bucket_min := Vector2i.ZERO
+var _bucket_max := Vector2i(-1, -1)
 var _indexed_count: int = -1
 
 
@@ -294,9 +301,13 @@ func _ensure_index() -> void:
 
 	_buckets.clear()
 	_bucket_size = maxf(spacing() * 2.0, 1.0)
+	_bucket_min = Vector2i(2147483647, 2147483647)
+	_bucket_max = Vector2i(-2147483648, -2147483648)
 
 	for i in points.size():
 		var key := Vector2i(floori(points[i].x / _bucket_size), floori(points[i].z / _bucket_size))
+		_bucket_min = Vector2i(mini(_bucket_min.x, key.x), mini(_bucket_min.y, key.y))
+		_bucket_max = Vector2i(maxi(_bucket_max.x, key.x), maxi(_bucket_max.y, key.y))
 		var bucket: PackedInt32Array = _buckets.get(key, PackedInt32Array())
 		bucket.append(i)
 		# Written back: a PackedInt32Array out of a Dictionary is a copy.
