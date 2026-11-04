@@ -65,7 +65,57 @@ func _test_nav_data() -> void:
 	var cut_graph := DotNpcNavGraph.new(diamond)
 	_check(diamond.cut_edges().size() == 6, "pruning remembers the three edges it cut", "%d" % diamond.cut_edges().size())
 	_check(cut_graph._crosses_cut(Vector3(0, 0, -3), Vector3(4, 0, 0)) and not cut_graph._crosses_cut(Vector3(5, 0, -3), Vector3(8, 0, -1)), "and a leg across one is refused while a leg elsewhere is not")
+	_nav_prune_slack()
 	_done()
+
+
+func _nav_prune_slack() -> void:
+	# A point on a post slides off it instead of splitting the line.
+	var line := _line_nav([Vector3(0, 0, 0), Vector3(1, 0, 0), Vector3(2, 0, 0)], [0, 1, 1, 2])
+	var post := DotNpcNavPrune.new()
+	post.point_blocked = func(p: Vector3) -> bool: return p.distance_to(Vector3(1, 0, 0)) < 0.08
+	post.nudge = 0.2
+	_check(post.apply(line) == Vector2i.ZERO and post.nudged == 1 and line.edge_count() == 2, "a blocked point slides clear and keeps its edges", "%d moved" % post.nudged)
+	_check(line.points[1].distance_to(Vector3(1, 0, 0)) >= 0.08 and line.points[1].distance_to(Vector3(1, 0, 0)) <= 0.2, "no further than the nudge")
+
+	# A ledge at y 3 whose slab ends at z 0.2; the floor below runs under it. The straight line cuts the slab.
+	var slab := func(a: Vector3, b: Vector3) -> bool:
+		for i in 21:
+			var p := a.lerp(b, i / 20.0)
+			if p.y > 2.5 and p.y < 2.95 and p.z > 0.2:
+				return true
+		return false
+	var ledge := _line_nav([Vector3(0, 3, 0), Vector3(0, 0, 2)], [0, 1])
+	var straight := DotNpcNavPrune.new()
+	straight.edge_blocked = slab
+	_check(straight.apply(ledge) == Vector2i(0, 1), "a drop whose straight line cuts its ledge is cut without a climb rule")
+	ledge = _line_nav([Vector3(0, 3, 0), Vector3(0, 0, 2)], [0, 1])
+	var falls := DotNpcNavPrune.new()
+	falls.edge_blocked = slab
+	falls.climb = 1.0
+	_check(falls.apply(ledge) == Vector2i.ZERO and ledge.edge_count() == 1, "and kept when the body can step off and fall beside it")
+	_check(DotNpcNavPrune.level_change_blocked(func(_a: Vector3, _b: Vector3) -> bool: return true, Callable(), Vector3(0, 3, 0), Vector3(0, 0, 0.5), 1.0), "a drop with no clear column stays cut")
+
+	# Two pieces joined only through a gap the strict body does not fit; a loose dead end off one piece is not kept.
+	var gap := _line_nav([Vector3(0, 0, 0), Vector3(1, 0, 0), Vector3(2, 0, 0), Vector3(3, 0, 0), Vector3(4, 0, 0), Vector3(0, 0, 1)], [0, 1, 1, 2, 2, 3, 3, 4, 0, 5])
+	var squeeze := DotNpcNavPrune.new()
+	squeeze.point_blocked = func(p: Vector3) -> bool: return p.x == 2.0 or p.z == 1.0
+	squeeze.loose_point_blocked = func(_p: Vector3) -> bool: return false
+	var squeezed := squeeze.apply(gap)
+	_check(squeezed == Vector2i(1, 1) and squeeze.joined_points == 1 and squeeze.joined_edges == 2, "a loose gap is kept where it joins two pieces, a loose dead end is not", "%s, %d points" % [squeezed, squeeze.joined_points])
+	_check(DotNpcNavGraph.new(gap).find_path(Vector3(0, 0, 0), Vector3(4, 0, 0), 0.5).size() >= 2, "and the line walks through")
+	_check(gap.cut_edges().size() == 2, "the dead end's edge is remembered as cut", "%d" % gap.cut_edges().size())
+
+
+func _line_nav(points: Array, edges: Array) -> DotNpcNavData:
+	var nav := DotNpcNavData.new()
+	nav.map_id = &"prune"
+	nav.source_digest = "p"
+	for p: Vector3 in points:
+		nav.add_point(p)
+	for k in range(0, edges.size(), 2):
+		nav.connect_points(edges[k], edges[k + 1])
+	return nav
 
 
 func _test_nav_builder() -> void:
