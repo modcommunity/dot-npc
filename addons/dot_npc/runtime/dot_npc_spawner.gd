@@ -132,6 +132,13 @@ var path_workers: int = 0
 ## 0 decides inline. The result is identical either way: apply runs in NPC order after the join.
 var think_workers: int = 0
 
+## [member think_workers] when set, else [member DotNpcLimits.think_workers].
+func effective_think_workers() -> int:
+	if think_workers != 0 or limits == null:
+		return think_workers
+	return limits.think_workers
+
+
 var _pathing := DotNpcPathing.new(self)
 var _perception := DotNpcPerception.new(self)
 var _spawning := DotNpcSpawning.new(self)
@@ -330,7 +337,7 @@ func _decide_and_apply(split: Array, gathered: Array) -> void:
 	var pooled := split.all(func(b: DotNpcBrain) -> bool: return b.is_thread_safe())
 	var intents := DotParallel.run(
 		func(i: int) -> Variant: return (split[i] as DotNpcBrain)._npc_decide(gathered[i]),
-		split.size(), &"npc_think", think_workers if pooled else 0,
+		split.size(), &"npc_think", effective_think_workers() if pooled else 0,
 		func(a: Variant, b: Variant) -> String: return "" if var_to_str(a) == var_to_str(b) else "%s vs %s" % [a, b]
 	)
 
@@ -750,7 +757,7 @@ func describe() -> Dictionary:
 		"seeded_by": "game" if seed_source.is_valid() else "spawn count",
 		"nav": nav.describe() if has_nav() else "none",
 		"path_workers": DotParallel.resolve_workers(path_workers),
-		"think_workers": DotParallel.resolve_workers(think_workers),
+		"think_workers": DotParallel.resolve_workers(effective_think_workers()),
 		"limits": limits.describe_summary() if limits != null else "none",
 	}
 

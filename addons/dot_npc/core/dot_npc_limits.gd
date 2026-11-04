@@ -62,6 +62,13 @@ extends DotConfig
 @export_range(0.0, 100.0, 0.5) var spawn_snap_radius: float = 4.0
 
 
+@export_group("Threads")
+
+## Worker threads for the decide step of brains that split their think and are thread safe. 0 = decide inline, -1 = automatic.
+## The result is identical either way. A host copies dot-server's `sv_threads_npc` here; [member DotNpcSpawner.think_workers] wins when it is set.
+@export_range(-1, 16, 1) var think_workers: int = 0
+
+
 func env_prefix() -> String:
 	return "DOT_NPC_"
 
