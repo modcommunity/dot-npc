@@ -101,6 +101,7 @@ func rebuild(p_data: DotNpcNavData) -> DotResult:
 	_adjacency.clear()
 	_cut_index.clear()
 	_cut_indexed = false
+	_surrounded_memo.clear()
 
 	if data == null:
 		return DotResult.fail(DotError.CODE_INVALID, "No navigation data.")
@@ -685,6 +686,7 @@ func can_walk_straight(a: Vector3, b: Vector3, corridor: float = -1.0) -> bool:
 
 var _cut_index: Dictionary = {}
 var _cut_indexed := false
+var _surrounded_memo: Dictionary = {}
 
 
 ## Whether the line a to b crosses an edge the data's prune cut (physics said a body cannot use it).
@@ -763,7 +765,31 @@ func _sample_clear(at: Vector3, point: int) -> bool:
 	if at.distance_to(data.points[point]) <= data.grid_spacing * straight_width_ratio + 0.01:
 		return true
 
-	return neighbours(point).size() >= FULL_NEIGHBOURS
+	return _surrounded(point)
+
+
+## Whether the point has a neighbour in every 45 degree sector within two cells. A count cannot tell: extended
+## links keep it over [constant FULL_NEIGHBOURS] when a wall took the whole west side, and a line may graze that wall.
+func _surrounded(point: int) -> bool:
+	var known: Variant = _surrounded_memo.get(point)
+
+	if known != null:
+		return known
+
+	var here := data.points[point]
+	var reach := data.grid_spacing * 2.0
+	var seen := 0
+
+	for n in neighbours(point):
+		var d := data.points[n] - here
+		d.y = 0.0
+
+		if d.length() <= reach and d.length() > 0.001:
+			seen |= 1 << (int(floor((atan2(d.z, d.x) + PI) / (TAU / FULL_NEIGHBOURS))) % FULL_NEIGHBOURS)
+
+	var full := seen == (1 << FULL_NEIGHBOURS) - 1
+	_surrounded_memo[point] = full
+	return full
 
 
 func _are_neighbours(a: int, b: int) -> bool:
