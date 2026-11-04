@@ -40,7 +40,37 @@ func unbind() -> void:
 ## One simulated tick.
 func think(delta: float) -> void:
 	age += delta
+	if splits_think():
+		_npc_apply(_npc_decide(_npc_gather(delta)))
+		return
 	_npc_think(delta)
+
+
+## Whether this brain thinks as gather, decide, apply instead of [method _npc_think]. The spawner runs
+## every such brain's gather, then every decide (on workers when [member DotNpcSpawner.think_workers]), then every apply.
+func splits_think() -> bool:
+	return false
+
+
+## Whether [method _npc_decide] is pure enough for a worker thread. Opt-in: a wrong answer here is wrong data, not a crash.
+func is_thread_safe() -> bool:
+	return false
+
+
+## Main thread: read nodes, rays and the world into plain data (numbers, vectors, arrays). Nothing else reads the world.
+func _npc_gather(_delta: float) -> Variant:
+	return null
+
+
+## Pure: a function of [param data] and the brain's own fields, with no node, physics, DotLog, signal or shared-RNG access.
+## Returns the intent as plain data, and changes nothing.
+func _npc_decide(_data: Variant) -> Variant:
+	return null
+
+
+## Main thread, in the spawner's NPC order: write [param intent] to the body and the brain's state.
+func _npc_apply(_intent: Variant) -> void:
+	pass
 
 
 func damaged(amount: float, by: StringName) -> void:

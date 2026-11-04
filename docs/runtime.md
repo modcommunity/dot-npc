@@ -87,6 +87,10 @@ The spawner holds every scene and brain script it loads for as long as it lives,
 
 A body far enough out that a metre cannot move it (one fallen out of a map and still falling, one flung to infinity) is skipped rather than handed to `look_at`, which printed its refusal once a think per such NPC (game-zombie-zone's mall, sixty-five times in a run). Taking such an NPC out of the world is the game's job.
 
+## Thinking as gather, decide, apply
+
+A brain that overrides `splits_think()` does not use `_npc_think`: the spawner runs every such brain's `_npc_gather` (main thread: nodes, rays, the world, copied to plain data), then every `_npc_decide` (pure; on `DotNpcSpawner.think_workers` workers, default 0, when every brain says `is_thread_safe()`), then every `_npc_apply` (main thread, in the spawner's NPC order, skipping an NPC an earlier apply killed). One order whatever the worker count, so intents and positions hash the same with threads off and on; non-split brains still think inline during the gather pass. dot-npc-ai's brain does not split yet.
+
 ## Dying and being reclaimed are not the same event
 
 `died` fires while the node still exists, names who did it, and is what a scoring layer listens to. `removed` fires for every departure including a director tidying up something nobody could see. A game with only `removed` would either award a kill for the tidy-up or have to guess.

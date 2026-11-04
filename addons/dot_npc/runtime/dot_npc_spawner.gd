@@ -128,6 +128,10 @@ var repath_interval_per_m: float = 0.0
 ## so that think follows the old path. A host copies dot-server's `sv_threads_npc` here.
 var path_workers: int = 0
 
+## Worker threads for the decide step of brains that [method DotNpcBrain.splits_think] and are thread safe.
+## 0 decides inline. The result is identical either way: apply runs in NPC order after the join.
+var think_workers: int = 0
+
 var _pathing := DotNpcPathing.new(self)
 var _perception := DotNpcPerception.new(self)
 var _spawning := DotNpcSpawning.new(self)
@@ -292,6 +296,8 @@ func _think(delta: float) -> void:
 	# A copy, because a brain may kill its NPC — a suicide bomber is the obvious one —
 	# and removing from the dictionary being iterated skips every other NPC.
 	var ids: Array = _npcs.keys()
+	var split: Array = []
+	var gathered: Array = []
 
 	for id in ids:
 		var found: Variant = _npcs.get(id)
@@ -304,9 +310,36 @@ func _think(delta: float) -> void:
 		if not npc.is_alive() or npc.brain == null:
 			continue
 
-		(npc.brain as DotNpcBrain).think(delta)
+		var brain := npc.brain as DotNpcBrain
+
+		if brain.splits_think():
+			brain.age += delta
+			split.append(brain)
+			gathered.append(brain._npc_gather(delta))
+		else:
+			brain.think(delta)
+
+	if not split.is_empty():
+		_decide_and_apply(split, gathered)
 
 	answer_paths()
+
+
+## Decide for every gathered brain (pooled when allowed and every brain is thread safe), then apply in gather order.
+func _decide_and_apply(split: Array, gathered: Array) -> void:
+	var pooled := split.all(func(b: DotNpcBrain) -> bool: return b.is_thread_safe())
+	var intents := DotParallel.run(
+		func(i: int) -> Variant: return (split[i] as DotNpcBrain)._npc_decide(gathered[i]),
+		split.size(), &"npc_think", think_workers if pooled else 0,
+		func(a: Variant, b: Variant) -> String: return "" if var_to_str(a) == var_to_str(b) else "%s vs %s" % [a, b]
+	)
+
+	for i in split.size():
+		var brain: DotNpcBrain = split[i]
+
+		# An earlier apply may have killed this NPC (a blast); its intent is dropped, as a dead brain's think is.
+		if brain.npc != null and brain.npc.is_alive():
+			brain._npc_apply(intents[i])
 
 
 ## Spawns one NPC. Null on refusal, with [signal refused] emitted.
@@ -717,6 +750,7 @@ func describe() -> Dictionary:
 		"seeded_by": "game" if seed_source.is_valid() else "spawn count",
 		"nav": nav.describe() if has_nav() else "none",
 		"path_workers": DotParallel.resolve_workers(path_workers),
+		"think_workers": DotParallel.resolve_workers(think_workers),
 		"limits": limits.describe_summary() if limits != null else "none",
 	}
 

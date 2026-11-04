@@ -5,12 +5,12 @@ extends "res://examples/selftest/replication_tests.gd"
 ## a graph that joins a walkway to the floor below, a reclaim that deletes what is chasing someone. Real nodes, real tree.
 
 
-const CHECKS := 242 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2 + 3 + 2 + 3 + 2 + 11 + 4 + 2 + 2 + 8
+const CHECKS := 242 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2 + 3 + 2 + 3 + 2 + 11 + 4 + 2 + 2 + 8 + 5
 
 ## Sections entered against sections that ran to their last line. A runtime error inside a section aborts that
 ## function and nothing says so; a section that bailed early after a failed guard counts as unfinished on purpose.
 ## CHECKS is the other half; see docs/testing.md.
-const SECTIONS := 41
+const SECTIONS := 42
 
 func _ready() -> void:
 	DotLog.set_level(DotLog.Level.ERROR)
@@ -55,6 +55,7 @@ func _run() -> void:
 	_test_navigable_spawn()
 	_test_spawner_pathing()
 	_test_path_workers()
+	_test_think_split()
 	_test_brains()
 	_test_stable_seeds()
 	_test_brains_are_released()
@@ -801,3 +802,62 @@ func _test_path_workers() -> void:
 	for s in spawners:
 		s.queue_free()
 	_done()
+
+
+const SPLIT_TICKS := 2000
+
+## The gather/decide/apply split: the same 2000-tick hash of every brain's intents and the NPCs' places with decide inline, again,
+## and on two workers with DotParallel.verify. Applying in NPC order is what makes the three agree.
+func _test_think_split() -> void:
+	_section("split think")
+
+	var verify_before := DotParallel.verify
+	DotParallel.verify = true
+	var failures_before := DotParallel.verify_failures
+	var off := _split_run(0)
+	var off_again := _split_run(0)
+	var on := _split_run(2)
+	DotParallel.verify = verify_before
+
+	_check(off[1] == 24 * SPLIT_TICKS, "every split brain applied every tick", "%d applies" % off[1])
+	_check(off[0] != 0 and off[2] > 1, "the hash covers distinct intents", "%s" % [off])
+	_check(off[0] == off_again[0], "off against off: the same hash of 2000 ticks", "%d vs %d" % [off[0], off_again[0]])
+	_check(on[0] == off[0], "workers 2 against off: the same hash",
+		"%d vs %d%s" % [on[0], off[0], "" if DotParallel.resolve_workers(2) > 0 else " (no threads here: inline)"])
+	_check(DotParallel.verify_failures == failures_before, "and verify found no task that differs between runs")
+	_done()
+
+
+## Returns [hash, applies, distinct histories] of one scripted run.
+func _split_run(workers: int) -> Array:
+	var limits := _limits()
+	limits.world_budget = 0
+	limits.per_kind_cap = 0
+	var spawner := _spawner(limits)
+	var def := DotNpcDef.make(&"splitter", BODY)
+	def.brain_script_path = "res://fixtures/split_brain.gd"
+	def.max_health = 100.0
+	def.require_line_of_sight = false
+	spawner.catalogue.add(def)
+	spawner.think_workers = workers
+	var brains: Array = []
+
+	for i in 24:
+		var npc := spawner.spawn(&"splitter", Vector3(i * 1.5 - 18.0, 0, (i % 5) * 3.0 - 6.0))
+		if npc != null:
+			brains.append(npc.brain)
+
+	for t in SPLIT_TICKS:
+		spawner.tick(0.016)
+
+	var h := 0
+	var applies := 0
+	var distinct := {}
+
+	for b in brains:
+		h = hash([h, b.history, snappedf(b.npc.position().x, 0.001), snappedf(b.npc.position().z, 0.001)])
+		applies += b.ticks
+		distinct[b.history] = true
+
+	spawner.queue_free()
+	return [h, applies, distinct.size()]
