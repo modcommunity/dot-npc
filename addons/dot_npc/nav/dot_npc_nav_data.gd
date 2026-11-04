@@ -187,10 +187,9 @@ func connect_points(a: int, b: int) -> DotResult:
 	return DotResult.success(null)
 
 
-## Drops what a physics test says a body cannot stand in or walk through, and compacts the rest. The builder knows
-## the boxes it was given; a hull no box describes is what [param point_blocked] (`func(p: Vector3) -> bool`) and
-## [param edge_blocked] (`func(a: Vector3, b: Vector3) -> bool`) are for. Returns (points dropped, edges dropped).
-## Main thread only when the Callables query physics; run it before a [DotNpcNavGraph] is made from this.
+## Drops what a physics test says a body cannot stand in or walk through, and compacts the rest;
+## [param point_blocked] and [param edge_blocked] cover hulls no builder box describes. Returns
+## (points dropped, edges dropped). Main thread only; run it before making a [DotNpcNavGraph].
 func prune(point_blocked: Callable, edge_blocked: Callable = Callable()) -> Vector2i:
 	normalise_arrays()
 	var remap := PackedInt32Array()
