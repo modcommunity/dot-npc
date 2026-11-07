@@ -35,7 +35,7 @@ Profiles: `DotNpcProfiles` (the `npc` kind) offers `profile_schemas()`, so dot-c
 
 ## Running and testing
 
-- Link `addons/dot_core` once ([development setup](../../docs/development-setup.md)), then the family's two steps ([game-dev/CLAUDE.md](../../CLAUDE.md#validating-anything)) and `timeout 120 godot --headless --path . res://examples/npc_selftest.tscn`. Exits non-zero on failure.
+- Link `addons/dot_core` once ([development setup](../../docs/development-setup.md)), then the family's two steps ([family CLAUDE.md](../../CLAUDE.md#validating-anything)) and `timeout 120 godot --headless --path . res://examples/npc_selftest.tscn`. Exits non-zero on failure.
 - The games that run NPCs (game-arena, game-g2gfast, game-playground, game-zombie-zone, game-hungario in 2D) are where most of this addon's bugs were found; run the ones a change touches.
 
 ## Rules that bite
