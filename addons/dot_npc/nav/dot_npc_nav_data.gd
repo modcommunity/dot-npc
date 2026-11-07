@@ -275,6 +275,9 @@ func nearest_point_where(p: Vector3, radius: float, accept: Callable) -> int:
 
 	_ensure_index()
 
+	var pts := points
+	var check := accept.is_valid()
+
 	var cell := _bucket_size
 	var x0 := floori((p.x - limit) / cell)
 	var x1 := floori((p.x + limit) / cell)
@@ -283,11 +286,11 @@ func nearest_point_where(p: Vector3, radius: float, accept: Callable) -> int:
 
 	# A radius wider than the map would otherwise walk thousands of empty buckets; past
 	# the point where buckets outnumber points, the scan is the cheaper question.
-	if (x1 - x0 + 1) * (z1 - z0 + 1) > points.size():
-		for i in points.size():
-			var d_all := points[i].distance_squared_to(p)
+	if (x1 - x0 + 1) * (z1 - z0 + 1) > pts.size():
+		for i in pts.size():
+			var d_all := pts[i].distance_squared_to(p)
 			if d_all <= limit_sq and (d_all < best_sq or (d_all == best_sq and i < best)):
-				if accept.is_valid() and not bool(accept.call(i)):
+				if check and not bool(accept.call(i)):
 					continue
 				best_sq = d_all
 				best = i
@@ -301,12 +304,12 @@ func nearest_point_where(p: Vector3, radius: float, accept: Callable) -> int:
 				continue
 
 			for i: int in (bucket as PackedInt32Array):
-				var d_sq := points[i].distance_squared_to(p)
+				var d_sq := pts[i].distance_squared_to(p)
 
 				if d_sq > limit_sq or d_sq > best_sq or (d_sq == best_sq and i > best):
 					continue
 
-				if accept.is_valid() and not bool(accept.call(i)):
+				if check and not bool(accept.call(i)):
 					continue
 
 				best_sq = d_sq

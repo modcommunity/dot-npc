@@ -100,6 +100,7 @@ func rebuild(p_data: DotNpcNavData) -> DotResult:
 	data = p_data
 	_adjacency.clear()
 	_cut_index.clear()
+	_cut_near.clear()
 	_cut_indexed = false
 	_surrounded_memo.clear()
 
@@ -685,6 +686,8 @@ func can_walk_straight(a: Vector3, b: Vector3, corridor: float = -1.0) -> bool:
 
 
 var _cut_index: Dictionary = {}
+## Cells with a cut segment in them or in the eight round them: a line sample elsewhere has nothing to test.
+var _cut_near: Dictionary = {}
 var _cut_indexed := false
 var _surrounded_memo: Dictionary = {}
 
@@ -702,6 +705,11 @@ func _crosses_cut(a: Vector3, b: Vector3) -> bool:
 			list.append(k)
 			_cut_index[key] = list
 
+		for key: Vector2i in _cut_index:
+			for dx in range(-1, 2):
+				for dz in range(-1, 2):
+					_cut_near[Vector2i(key.x + dx, key.y + dz)] = true
+
 	if _cut_index.is_empty():
 		return false
 
@@ -713,6 +721,9 @@ func _crosses_cut(a: Vector3, b: Vector3) -> bool:
 	for i in steps + 1:
 		var at := a.lerp(b, float(i) / steps)
 		var home := _cut_cell(at)
+
+		if not _cut_near.has(home):
+			continue
 
 		for dx in range(-1, 2):
 			for dz in range(-1, 2):
@@ -897,12 +908,19 @@ func find_smooth_path(
 	allow_partial: bool = false,
 	horizon: int = 0
 ) -> PackedVector3Array:
+	var t0 := Time.get_ticks_usec()
 	var path := find_path(from, to, snap_radius, allow_partial)
-
-	if path.size() <= 2:
-		return path
-
-	return smooth_path(path, -1.0, 8, horizon)
+	var t1 := Time.get_ticks_usec()
+	var r := path
+	if path.size() > 2:
+		r = smooth_path(path, -1.0, 8, horizon)
+	var t2 := Time.get_ticks_usec()
+	var T: Dictionary = Engine.get_meta(&"T", {})
+	T["find_us"] = T.get("find_us", 0) + t1 - t0
+	T["smooth_us"] = T.get("smooth_us", 0) + t2 - t1
+	T["n"] = T.get("n", 0) + 1
+	Engine.set_meta(&"T", T)
+	return r
 
 
 func describe() -> Dictionary:
