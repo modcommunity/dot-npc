@@ -571,6 +571,8 @@ func _step_links() -> void:
 			_deferred_links.append([a, b, pair])
 		elif a >= 0 and b >= 0 and a != b:
 			_connect_link(a, b, pair)
+		elif a >= 0 and a == b:
+			pass	# both ends snap to one point: nothing to join, and not a miss
 		else:
 			_unlinked += 1
 			if _unlinked_examples.size() < LINK_EXAMPLES:
