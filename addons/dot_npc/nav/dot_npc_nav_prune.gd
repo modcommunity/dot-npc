@@ -21,10 +21,18 @@ var climb := INF
 ## How far from either end that column may be.
 var column_reach := 1.0
 
+## Spots that must stay joined to the rest of the graph (spawns, posts). Where the strict and loose tests leave a piece
+## holding one apart from another such piece the raw graph joined it to, the shortest cut edge that rejoins them is kept as a
+## bridge: a link through a floor is better than a post no body ever reaches. Empty: nothing is bridged.
+var required := PackedVector3Array()
+## How far a required spot may stand from the graph point that stands for it.
+var required_reach := 2.5
+
 ## What the last [method apply] did beyond dropping: points slid, and points and edges kept loosely.
 var nudged := 0
 var joined_points := 0
 var joined_edges := 0
+var bridged_edges := 0
 
 const _NUDGE_STEP := 0.05
 const _NUDGE_DIRECTIONS := 16
@@ -41,6 +49,7 @@ func apply(nav: DotNpcNavData) -> Vector2i:
 	nudged = 0
 	joined_points = 0
 	joined_edges = 0
+	bridged_edges = 0
 	var count := nav.points.size()
 	var state := PackedInt32Array()
 	state.resize(count)
@@ -69,6 +78,7 @@ func apply(nav: DotNpcNavData) -> Vector2i:
 			loose_lengths.append(moved[a].distance_to(moved[b]))
 
 	var kept_edges := strict_edges + _joining(count, state, strict_edges, loose_edges, loose_lengths)
+	kept_edges += _bridges(nav, state, moved, kept_edges)
 	return _compact(nav, state, moved, kept_edges)
 
 
@@ -196,6 +206,59 @@ func _joining(count: int, state: PackedInt32Array, strict_edges: PackedInt32Arra
 				state[i] = _DROP
 
 	return kept
+
+
+## Cut edges, shortest first, that join two pieces each holding a required spot (never a piece with none: that would
+## put the junk the prune cut back).
+func _bridges(nav: DotNpcNavData, state: PackedInt32Array, moved: PackedVector3Array, kept_edges: PackedInt32Array) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	if required.is_empty():
+		return out
+
+	var count := nav.points.size()
+	var parent := PackedInt32Array()
+	parent.resize(count)
+	for i in count:
+		parent[i] = i
+	var kept := {}
+	for k in range(0, kept_edges.size(), 2):
+		_union(parent, kept_edges[k], kept_edges[k + 1])
+		kept[Vector2i(mini(kept_edges[k], kept_edges[k + 1]), maxi(kept_edges[k], kept_edges[k + 1]))] = true
+
+	var flagged := {}
+	for spot in required:
+		var best := -1
+		var best_d := required_reach * required_reach
+		for i in count:
+			if state[i] == _STRICT:
+				var d := moved[i].distance_squared_to(spot)
+				if d < best_d:
+					best_d = d
+					best = i
+		if best >= 0:
+			flagged[_find(parent, best)] = true
+
+	var candidates: Array[int] = []
+	for k in range(0, nav.edges.size(), 2):
+		var a := nav.edges[k]
+		var b := nav.edges[k + 1]
+		if state[a] == _STRICT and state[b] == _STRICT and not kept.has(Vector2i(mini(a, b), maxi(a, b))):
+			candidates.append(k)
+	candidates.sort_custom(func(x: int, y: int) -> bool:
+		return moved[nav.edges[x]].distance_squared_to(moved[nav.edges[x + 1]]) < moved[nav.edges[y]].distance_squared_to(moved[nav.edges[y + 1]]))
+
+	for k in candidates:
+		var a := nav.edges[k]
+		var b := nav.edges[k + 1]
+		var ra := _find(parent, a)
+		var rb := _find(parent, b)
+		if ra == rb or not (flagged.has(ra) and flagged.has(rb)):
+			continue
+		parent[ra] = rb
+		out.append_array([a, b])
+
+	bridged_edges = out.size() / 2
+	return out
 
 
 func _compact(nav: DotNpcNavData, state: PackedInt32Array, moved: PackedVector3Array, kept_edges: PackedInt32Array) -> Vector2i:

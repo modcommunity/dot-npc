@@ -107,6 +107,14 @@ func _nav_prune_slack() -> void:
 	_check(gap.cut_edges().size() == 2, "the dead end's edge is remembered as cut", "%d" % gap.cut_edges().size())
 
 
+	# Two pieces each holding a required spot, joined only by an edge the test blocks: the edge stays as a bridge. A piece with none is not rejoined.
+	var wall := _line_nav([Vector3(0, 0, 0), Vector3(1, 0, 0), Vector3(2, 0, 0), Vector3(3, 0, 0), Vector3(0, 0, 5), Vector3(1, 0, 5)], [0, 1, 1, 2, 2, 3, 0, 4, 4, 5])
+	var bridge := DotNpcNavPrune.new()
+	bridge.edge_blocked = func(a: Vector3, b: Vector3) -> bool: return (a.x == 1.0 and b.x == 2.0) or (a.z == 5.0 and b.z == 0.0) or (a.z == 0.0 and b.z == 5.0)
+	bridge.required = PackedVector3Array([Vector3(0, 0, 0), Vector3(3, 0, 0)])
+	bridge.apply(wall)
+	_check(bridge.bridged_edges == 1 and wall.point_count() == 6 and wall.edge_count() == 4, "a required piece apart is bridged by the shortest cut edge, a piece with no required spot stays cut", "%d bridged, %d edges" % [bridge.bridged_edges, wall.edge_count()])
+
 func _line_nav(points: Array, edges: Array) -> DotNpcNavData:
 	var nav := DotNpcNavData.new()
 	nav.map_id = &"prune"
