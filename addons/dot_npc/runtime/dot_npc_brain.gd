@@ -18,6 +18,9 @@ var age: float = 0.0
 ## The path being walked, if this brain paths at all.
 var path: DotNpcPath = null
 
+## A player's hold on this body (see [DotNpcDrive]); null or inactive means the AI runs. Set by the game.
+var drive: DotNpcDrive = null
+
 
 
 func bind(p_npc: DotNpcInstance, p_director: Node) -> void:
@@ -40,6 +43,9 @@ func unbind() -> void:
 ## One simulated tick.
 func think(delta: float) -> void:
 	age += delta
+	if drive != null and drive.active:
+		_npc_driven(delta)
+		return
 	if splits_think():
 		_npc_apply(_npc_decide(_npc_gather(delta)))
 		return
@@ -88,6 +94,11 @@ func _npc_ready() -> void:
 
 
 ## Called every simulated tick while the NPC is alive.
+## A tick while [member drive] is active: move the body from it. Replaces [method _npc_think].
+func _npc_driven(_delta: float) -> void:
+	pass
+
+
 func _npc_think(_delta: float) -> void:
 	pass
 

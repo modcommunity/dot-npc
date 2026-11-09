@@ -5,12 +5,12 @@ extends "res://examples/selftest/replication_tests.gd"
 ## a graph that joins a walkway to the floor below, a reclaim that deletes what is chasing someone. Real nodes, real tree.
 
 
-const CHECKS := 242 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2 + 3 + 2 + 3 + 2 + 11 + 4 + 2 + 2 + 8 + 5
+const CHECKS := 242 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2 + 3 + 2 + 3 + 2 + 11 + 4 + 2 + 2 + 8 + 5 + 8
 
 ## Sections entered against sections that ran to their last line. A runtime error inside a section aborts that
 ## function and nothing says so; a section that bailed early after a failed guard counts as unfinished on purpose.
 ## CHECKS is the other half; see docs/testing.md.
-const SECTIONS := 42
+const SECTIONS := 43
 
 func _ready() -> void:
 	DotLog.set_level(DotLog.Level.ERROR)
@@ -56,6 +56,7 @@ func _run() -> void:
 	_test_spawner_pathing()
 	_test_path_workers()
 	_test_think_split()
+	_test_drive()
 	_test_brains()
 	_test_stable_seeds()
 	_test_brains_are_released()
@@ -808,6 +809,31 @@ const SPLIT_TICKS := 2000
 
 ## The gather/decide/apply split: the same 2000-tick hash of every brain's intents and the NPCs' places with decide inline, again,
 ## and on two workers with DotParallel.verify. Applying in NPC order is what makes the three agree.
+func _test_drive() -> void:
+	_section("a player's drive")
+	var drive := DotNpcDrive.new()
+	_check(not drive.active and drive.wish_velocity(5.0) == Vector3.ZERO, "idle: inactive and no wish")
+	drive.grab(&"p1")
+	drive.feed(Vector2(0, 1), 0.0, 1)
+	_check(drive.active and drive.wish_velocity(5.0).is_equal_approx(Vector3(0, 0, -5)), "forward at yaw 0 is -Z", str(drive.wish_velocity(5.0)))
+	drive.feed(Vector2(0, 1), PI * 0.5, 1)
+	_check(drive.wish_velocity(5.0).is_equal_approx(Vector3(-5, 0, 0)), "a quarter turn left walks -X", str(drive.wish_velocity(5.0)))
+	drive.feed(Vector2(3, 4), 0.0, 1)
+	_check(is_equal_approx(drive.move.length(), 1.0), "diagonal intent is clamped to 1")
+	_check(drive.take_pressed() == 1 and drive.take_pressed() == 0, "a press is an edge, taken once")
+	drive.feed(Vector2.ZERO, 0.0, 0)
+	drive.feed(Vector2.ZERO, 0.0, 1)
+	_check(drive.take_pressed() == 1, "and a release then a press is a new edge")
+
+	var brain := DotNpcBrain.new()
+	brain.drive = drive
+	brain.think(0.1)
+	_check(brain.age > 0.0, "a driven brain still ages")
+	drive.release()
+	_check(not drive.active and drive.holder == &"", "release clears the hold")
+	_done()
+
+
 func _test_think_split() -> void:
 	_section("split think")
 

@@ -91,6 +91,10 @@ A body far enough out that a metre cannot move it (one fallen out of a map and s
 
 A brain that overrides `splits_think()` does not use `_npc_think`: the spawner runs every such brain's `_npc_gather` (main thread: nodes, rays, the world, copied to plain data), then every `_npc_decide` (pure; on `DotNpcSpawner.think_workers` workers, default 0, when every brain says `is_thread_safe()`), then every `_npc_apply` (main thread, in the spawner's NPC order, skipping an NPC an earlier apply killed). One order whatever the worker count, so intents and positions hash the same with threads off and on; non-split brains still think inline during the gather pass. dot-npc-ai's brain does not split yet.
 
+## A player can hold the body
+
+`DotNpcBrain.drive` is a `DotNpcDrive`: plain move/yaw/buttons the game feeds from whatever codec it has. While `drive.active`, `think` calls `_npc_driven(delta)` and never `_npc_think`, so no AI runs and the game's override moves the body (`drive.wish_velocity(speed)`, `drive.take_pressed()` for edges). Releasing it hands the body back to the AI untouched. Nothing here touches the net: a driven NPC is still server-authoritative and mirrored like any other, so a client sends its input by the game's own command and watches the body it holds. Ownership, the camera and the moveset are the game's.
+
 ## Dying and being reclaimed are not the same event
 
 `died` fires while the node still exists, names who did it, and is what a scoring layer listens to. `removed` fires for every departure including a director tidying up something nobody could see. A game with only `removed` would either award a kill for the tidy-up or have to guess.
