@@ -2,6 +2,36 @@ extends "res://examples/selftest/nav_tests.gd"
 ## Smoothing, filter, partial path, cover and path sections.
 
 
+## A graph whose reach is one-way: only points west of x=0 are reachable from anywhere.
+class OneWayGraph:
+	extends DotNpcNavGraph
+
+	func connected(a: int, b: int) -> bool:
+		if a < 0 or b < 0 or a >= data.points.size() or b >= data.points.size():
+			return false
+
+		return data.points[b].x < 0.0
+
+
+func _test_nav_one_way() -> void:
+	_section("navigation one-way pieces")
+
+	var builder := DotNpcNavBuilder.new()
+	builder.spacing = 2.0
+	builder.generate_cover = false
+	builder.add_floor(AABB(Vector3(-14, 0, -6), Vector3(30, 0, 12)), 0.0)
+
+	var graph := OneWayGraph.new(builder.build(&"oneway", "digest"))
+	var start := graph.data.nearest_point(Vector3(-12, 0, 0), 3.0)
+	var partial := graph.find_path(Vector3(-12, 0, 0), Vector3(12, 0, 0), 3.0, true)
+
+	_check(not partial.is_empty(), "a goal the override calls unreachable still gets a partial path")
+
+	var end := graph.data.points[graph._nearest_in_component(start, Vector3(12, 0, 0))]
+	_check(end.x < 0.0 and end.x > -2.5, "the nearest point is one connected() allows, closest to the goal", "x=%.1f" % end.x)
+	_done()
+
+
 func _test_nav_partial() -> void:
 	_section("navigation partial paths")
 

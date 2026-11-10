@@ -167,7 +167,9 @@ func _label_components() -> void:
 		label += 1
 
 
-## Whether two points are in the same connected piece of the graph.
+## Whether [param b] can be reached from [param a]: the same connected piece of the graph.
+## A game with one-way edges overrides this (directed); [method _nearest_in_component] and the
+## unreachable-goal shortcut in the planner both ask it, so one override is enough.
 func connected(a: int, b: int) -> bool:
 	if a < 0 or b < 0 or a >= _component.size() or b >= _component.size():
 		return false
@@ -179,7 +181,6 @@ func connected(a: int, b: int) -> bool:
 ## an unreachable goal ends. The same point a full search would have stopped at, found without
 ## searching everything the start can reach.
 func _nearest_in_component(start: int, to: Vector3) -> int:
-	var label := _component[start]
 	var radius := maxf(data.spacing(), 1.0) * 2.0
 
 	while radius < 4096.0:
@@ -187,7 +188,7 @@ func _nearest_in_component(start: int, to: Vector3) -> int:
 		var best_sq := INF
 
 		for index in data.points_within(to, radius):
-			if _component[index] != label:
+			if not connected(start, index):
 				continue
 
 			if filter != null and not filter.passes(data.area_of(index), data.flags_of(index)):
