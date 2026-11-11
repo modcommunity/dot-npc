@@ -384,3 +384,90 @@ func _test_senses_blind_and_smoke() -> void:
 	_check(senses.update_target(npc, [far], 4.2) == &"", "smoke blocks again")
 	_check(senses.update_target(npc, [far], 6.0) == &"far", "and expires by itself")
 	_done()
+
+
+func _test_senses_basics() -> void:
+	_section("senses")
+
+	var senses := DotNpcSenses.new()
+	var def := DotNpcDef.make(&"seer", BODY)
+	def.sight_range = 20.0
+	def.sight_half_angle_deg = 60.0
+	def.hearing_range = 5.0
+	def.require_line_of_sight = false
+
+	var npc := _loose_npc(def)
+
+	_check(
+		senses.perceives(npc, _candidate(&"a", Vector3(0, 0, -10))),
+		"something in front and in range is seen"
+	)
+	_check(
+		not senses.perceives(npc, _candidate(&"a", Vector3(0, 0, 10))),
+		"something behind is not"
+	)
+	_check(
+		not senses.perceives(npc, _candidate(&"a", Vector3(0, 0, -50))),
+		"and neither is something beyond the range"
+	)
+	_check(
+		senses.perceives(npc, _candidate(&"a", Vector3(0, 0, 3), &"player", 8.0)),
+		"but something loud behind is heard",
+		"an NPC that only saw could be walked up behind for ever"
+	)
+	_check(
+		not senses.perceives(npc, _candidate(&"a", Vector3(0, 0, 3), &"player", 1.0)),
+		"and something quiet behind is not"
+	)
+	_check(
+		not senses.perceives(npc, _candidate(&"z", Vector3(0, 0, -5), &"hostile")),
+		"and its own faction is never a target"
+	)
+
+	# The per-NPC scale: one attentive NPC of a kind sees further than the kind does, and
+	# a dull one less far, without a second definition.
+	npc.sight_scale = 3.0
+	_check(
+		senses.perceives(npc, _candidate(&"a", Vector3(0, 0, -50))),
+		"a sight scale of 3 sees what the kind's range does not"
+	)
+	npc.sight_scale = 0.25
+	_check(
+		not senses.perceives(npc, _candidate(&"a", Vector3(0, 0, -10))),
+		"and one of a quarter does not see what the kind would"
+	)
+
+	await _senses_on_floor(senses)
+	_done()
+
+
+func _senses_on_floor(senses: DotNpcSenses) -> void:
+	# Standing on a real floor, with line of sight on: the sight line must not start at the feet, ON the floor,
+	# or every NPC on a floor is blind.
+	var ground := StaticBody3D.new()
+	var slab := CollisionShape3D.new()
+	var slab_box := BoxShape3D.new()
+	slab_box.size = Vector3(40, 0.2, 40)
+	slab.shape = slab_box
+	slab.position = Vector3(0, -0.1, 0)
+	ground.add_child(slab)
+	var wall := CollisionShape3D.new()
+	var wall_box := BoxShape3D.new()
+	wall_box.size = Vector3(4, 4, 0.2)
+	wall.shape = wall_box
+	wall.position = Vector3(8, 2, -5)
+	ground.add_child(wall)
+	_world.add_child(ground)
+	await get_tree().physics_frame
+
+	var looker_def := DotNpcDef.make(&"looker", BODY)
+	looker_def.sight_range = 20.0
+	looker_def.sight_half_angle_deg = 80.0
+	var looker := _loose_npc(looker_def, Vector3(0, 0, 0))
+	senses.occlusion_mask = 0xFFFFFFFF
+	_check(senses.perceives(looker, _candidate(&"a", Vector3(0, 1, -8))),
+		"an NPC standing on a floor sees what is in front of it")
+	var behind_wall := _loose_npc(looker_def, Vector3(8, 0, 0))
+	_check(not senses.perceives(behind_wall, _candidate(&"a", Vector3(8, 1, -10))),
+		"and not through a wall")
+	ground.queue_free()

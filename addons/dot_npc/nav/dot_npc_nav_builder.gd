@@ -99,6 +99,9 @@ var _set_index := 0
 var _set_cursor := 0
 var _cursor := 0
 var _edge_total := 0
+## Obstacle indexes by cell (see [DotNpcNavIndex]); built on first use.
+var _obstacle_cells: Dictionary = {}
+var _cover_cells: Dictionary = {}
 
 ## How many unplaceable links a build's one warning names.
 const LINK_EXAMPLES := 3
@@ -311,7 +314,7 @@ func _step_floors() -> void:
 				var p := Vector3(_column, height, z)
 				z += spacing
 
-				if _blocked(p) or _already_placed(p, _seen, _positions, spacing * 0.5):
+				if _blocked(p) or DotNpcNavIndex.already_placed(p, _seen, _positions, spacing, spacing * 0.5):
 					continue
 
 				_place(p, floor_area_id, floor_flags, 0.0)
@@ -338,7 +341,7 @@ func _step_sets() -> void:
 			var p := pts[_set_cursor]
 			_set_cursor += 1
 
-			if not (_blocked(p) or _already_placed(p, _seen, _positions, spacing * 0.5)):
+			if not (_blocked(p) or DotNpcNavIndex.already_placed(p, _seen, _positions, spacing, spacing * 0.5)):
 				_place(p, int(set_data["area_id"]), int(set_data["flags"]), float(set_data["slope"]))
 
 			if (_set_cursor & 255) == 0 and _timed_out():
@@ -393,7 +396,7 @@ func _step_buckets() -> void:
 			return
 
 	if _obstacle_cells.is_empty() and not _obstacles.is_empty():
-		_index_obstacles()
+		_obstacle_cells = DotNpcNavIndex.index_obstacles(_obstacles, clearance)
 
 	_phase = Phase.EDGES
 	_cursor = 0
@@ -492,7 +495,7 @@ func _cover_chunk(from: int, to: int) -> Variant:
 	var has := PackedByteArray()
 
 	for i in range(from, to):
-		var found := _cover_at(i)
+		var found := DotNpcNavIndex.cover_at(_nav, _cover_cells, _obstacles, cover_range, i)
 		normals.append(found[0])
 		has.append(1 if found[1] else 0)
 
@@ -613,25 +616,16 @@ func _keep_needed_deferred_links() -> void:
 	if _deferred_links.is_empty():
 		return
 
-	var parent := PackedInt32Array()
-	parent.resize(_positions.size())
-
-	for i in parent.size():
-		parent[i] = i
-
-	var edges := _nav.edges
-
-	for k in range(0, edges.size(), 2):
-		_join_pieces(parent, edges[k], edges[k + 1])
+	var parent := DotNpcNavIndex.pieces(_nav, _positions.size())
 
 	for d: Array in _deferred_links:
 		var a: int = d[0]
 		var b: int = d[1]
 		var pair: Array = d[2]
 
-		if _piece_of(parent, a) != _piece_of(parent, b):
+		if DotNpcNavIndex.piece_of(parent, a) != DotNpcNavIndex.piece_of(parent, b):
 			_connect_link(a, b, pair)
-			_join_pieces(parent, a, b)
+			DotNpcNavIndex.join_pieces(parent, a, b)
 		else:
 			_unlinked += 1
 			if _unlinked_examples.size() < LINK_EXAMPLES:
@@ -642,22 +636,13 @@ func _keep_needed_deferred_links() -> void:
 
 ## Joins the nearest pairs of points across pieces, shortest first, one join for each pair of pieces.
 func _bridge_pieces() -> void:
-	var parent := PackedInt32Array()
-	parent.resize(_positions.size())
-
-	for i in parent.size():
-		parent[i] = i
-
-	var edges := _nav.edges
-
-	for k in range(0, edges.size(), 2):
-		_join_pieces(parent, edges[k], edges[k + 1])
+	var parent := DotNpcNavIndex.pieces(_nav, _positions.size())
 
 	var found: Array[Vector3] = []
 
 	for i in _positions.size():
 		for j in _nav.points_within(_positions[i], bridge_gap):
-			if j <= i or _piece_of(parent, i) == _piece_of(parent, j):
+			if j <= i or DotNpcNavIndex.piece_of(parent, i) == DotNpcNavIndex.piece_of(parent, j):
 				continue
 
 			if absf(_positions[i].y - _positions[j].y) > _rise(_positions[i], _positions[j], _slopes[i], _slopes[j]):
@@ -670,29 +655,13 @@ func _bridge_pieces() -> void:
 	var bridged := 0
 
 	for pair in found:
-		if _piece_of(parent, int(pair.y)) != _piece_of(parent, int(pair.z)):
+		if DotNpcNavIndex.piece_of(parent, int(pair.y)) != DotNpcNavIndex.piece_of(parent, int(pair.z)):
 			_nav.connect_points(int(pair.y), int(pair.z))
-			_join_pieces(parent, int(pair.y), int(pair.z))
+			DotNpcNavIndex.join_pieces(parent, int(pair.y), int(pair.z))
 			bridged += 1
 
 	if bridged > 0 and log_summary:
 		DotLog.debug(CHANNEL, "navigation pieces bridged", {"bridges": bridged, "gap": bridge_gap})
-
-
-static func _piece_of(parent: PackedInt32Array, i: int) -> int:
-	while parent[i] != i:
-		parent[i] = parent[parent[i]]
-		i = parent[i]
-
-	return i
-
-
-static func _join_pieces(parent: PackedInt32Array, a: int, b: int) -> void:
-	var ra := _piece_of(parent, a)
-	var rb := _piece_of(parent, b)
-
-	if ra != rb:
-		parent[rb] = ra
 
 
 func _step_cover() -> void:
@@ -703,7 +672,7 @@ func _step_cover() -> void:
 		return
 
 	if _cover_cells.is_empty() and not _obstacles.is_empty():
-		_index_cover()
+		_cover_cells = DotNpcNavIndex.index_cover(_obstacles, cover_range)
 
 	if workers > 1 and _deadline < 0 and total >= EDGE_BATCH * 4:
 		_run_parallel(_cover_chunk, W_POINTS + W_EDGES + W_LINKS, W_COVER, "cover")
@@ -726,7 +695,7 @@ func _step_cover() -> void:
 		var last := mini(_cursor + EDGE_BATCH, total)
 
 		for i in range(_cursor, last):
-			var found := _cover_at(i)
+			var found := DotNpcNavIndex.cover_at(_nav, _cover_cells, _obstacles, cover_range, i)
 			_cover_normal.append(found[0])
 			_cover_has.append(1 if found[1] else 0)
 
@@ -751,92 +720,11 @@ func _finish() -> void:
 	_publish(1.0, "done")
 
 
-## Records a cover spot beside every point that has an obstacle close enough to hide behind, normal pointing at it.
-## One spot per point, not per obstacle: an inside corner is one place good against two directions.
-## Only IN_COVER is generated; sniper and ledge spots need whole-map traces a generator can add itself.
-func _cover_at(i: int) -> Array:
-	if (_nav.flags_of(i) & DotNpcNavData.Flag.NO_HIDE) != 0:
-		return [Vector3.ZERO, false]
-
-	var p := _nav.points[i]
-	var best := Vector3.ZERO
-	var best_distance := INF
-	var bucket: Variant = _cover_cells.get(Vector2i(floori(p.x / OBSTACLE_CELL), floori(p.z / OBSTACLE_CELL)))
-
-	if bucket == null:
-		return [Vector3.ZERO, false]
-
-	# Only the obstacles whose cover_range-grown footprint reaches this cell; the others are too
-	# far to qualify, and the survivors are visited in obstacle order, so ties break as they did.
-	for index: int in (bucket as PackedInt32Array):
-		var box := _obstacles[index]
-		var nearest := Vector3(
-			clampf(p.x, box.position.x, box.position.x + box.size.x),
-			clampf(p.y, box.position.y, box.position.y + box.size.y),
-			clampf(p.z, box.position.z, box.position.z + box.size.z)
-		)
-
-		var to_box := nearest - p
-		# Measured horizontally. The floor an NPC stands on is an obstacle directly below it.
-		to_box.y = 0.0
-
-		var distance := to_box.length()
-		if distance > cover_range or distance >= best_distance:
-			continue
-
-		if distance <= 0.0001:
-			continue
-
-		best_distance = distance
-		best = to_box / distance
-
-	return [best, best_distance < INF]
-
-
-## Obstacle indexes by the cells their footprint grown by [member cover_range] touches.
-func _index_cover() -> void:
-	_cover_cells.clear()
-
-	for index in _obstacles.size():
-		var box := _obstacles[index]
-
-		for bx in range(floori((box.position.x - cover_range) / OBSTACLE_CELL), floori((box.end.x + cover_range) / OBSTACLE_CELL) + 1):
-			for bz in range(floori((box.position.z - cover_range) / OBSTACLE_CELL), floori((box.end.z + cover_range) / OBSTACLE_CELL) + 1):
-				var key := Vector2i(bx, bz)
-				var bucket: PackedInt32Array = _cover_cells.get(key, PackedInt32Array())
-				bucket.append(index)
-				_cover_cells[key] = bucket
-
-
-var _cover_cells: Dictionary = {}
-
-
 ## The most two neighbours may differ in height: a step on a floor, the slope on uneven ground.
 func _rise(a: Vector3, b: Vector3, slope_a: float, slope_b: float) -> float:
 	if slope_a <= 0.0 or slope_b <= 0.0:
 		return spacing * 0.5
 	return minf(slope_a, slope_b) * Vector2(a.x - b.x, a.z - b.z).length()
-
-
-## Whether a point already placed is within [param within] of [param p], at the same height
-## to within half a step.
-func _already_placed(p: Vector3, seen: Dictionary, positions: Array[Vector3], within: float) -> bool:
-	var cell := Vector2i(floori(p.x / spacing), floori(p.z / spacing))
-
-	for dx in range(-1, 2):
-		for dz in range(-1, 2):
-			var bucket: Variant = seen.get(cell + Vector2i(dx, dz))
-
-			if bucket == null:
-				continue
-
-			for index: int in (bucket as PackedInt32Array):
-				var other := positions[index]
-
-				if absf(other.y - p.y) <= spacing * 0.5 and Vector2(other.x - p.x, other.z - p.z).length() < within:
-					return true
-
-	return false
 
 
 func _overhead() -> float:
@@ -849,10 +737,10 @@ func _under_feet() -> float:
 
 func _blocked(p: Vector3) -> bool:
 	if _obstacle_cells.is_empty() and not _obstacles.is_empty():
-		_index_obstacles()
+		_obstacle_cells = DotNpcNavIndex.index_obstacles(_obstacles, clearance)
 
 	var bucket: Variant = _obstacle_cells.get(
-		Vector2i(floori(p.x / OBSTACLE_CELL), floori(p.z / OBSTACLE_CELL))
+		Vector2i(floori(p.x / DotNpcNavIndex.OBSTACLE_CELL), floori(p.z / DotNpcNavIndex.OBSTACLE_CELL))
 	)
 
 	if bucket == null:
@@ -871,28 +759,6 @@ func _blocked(p: Vector3) -> bool:
 
 	return false
 
-
-## Metres of (x, z) one obstacle bucket covers.
-const OBSTACLE_CELL := 4.0
-
-## Obstacle indexes by the (x, z) cells their grown box touches. Built on the first test
-## after an obstacle is added: a map of two thousand boxes asked "is this point inside
-## any of them" for every one of several thousand points was tens of millions of tests.
-var _obstacle_cells: Dictionary = {}
-
-
-func _index_obstacles() -> void:
-	_obstacle_cells.clear()
-
-	for index in _obstacles.size():
-		var grown := _obstacles[index].grow(clearance)
-
-		for bx in range(floori(grown.position.x / OBSTACLE_CELL), floori(grown.end.x / OBSTACLE_CELL) + 1):
-			for bz in range(floori(grown.position.z / OBSTACLE_CELL), floori(grown.end.z / OBSTACLE_CELL) + 1):
-				var key := Vector2i(bx, bz)
-				var bucket: PackedInt32Array = _obstacle_cells.get(key, PackedInt32Array())
-				bucket.append(index)
-				_obstacle_cells[key] = bucket
 
 
 ## Whether the straight line between two points passes through an obstacle.
