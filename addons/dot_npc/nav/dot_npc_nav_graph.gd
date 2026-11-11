@@ -43,6 +43,9 @@ var _copies: Dictionary = {}
 ## Point index -> [expires_at, factor]: places where a walker stalled, costed up for everybody until they expire.
 var _bad: Dictionary = {}
 
+## Caches for [method can_walk_straight] and the cut edges.
+var _line := DotNpcNavLine.new()
+
 
 ## Makes arriving at the point nearest [param at] cost [param factor] times as much until [param until] (the caller's clock), so
 ## every later search goes round it when it can. Returns the point's index, or -1 when none is within [param radius].
@@ -99,10 +102,7 @@ func _init(p_data: DotNpcNavData = null) -> void:
 func rebuild(p_data: DotNpcNavData) -> DotResult:
 	data = p_data
 	_adjacency.clear()
-	_cut_index.clear()
-	_cut_near.clear()
-	_cut_indexed = false
-	_surrounded_memo.clear()
+	_line.clear()
 
 	if data == null:
 		return DotResult.fail(DotError.CODE_INVALID, "No navigation data.")
@@ -295,14 +295,14 @@ func find_paths(queries: Array, workers: int) -> void:
 		var chunks := mini(engines.size(), group.size())
 		var size := ceili(float(group.size()) / chunks)
 		# The leg memo is one dictionary, so only an inline run may write it.
-		var legs: Variant = _leg_memo(-1.0) if n <= 0 else null
+		var legs: Variant = DotNpcNavSmooth.leg_memo(self, -1.0) if n <= 0 else null
 		var task := func(c: int) -> Array:
 			var out: Array = []
 			for i in range(c * size, mini(group.size(), (c + 1) * size)):
 				var q: PathQuery = group[i]
 				var a := _plan(q.from, q.to, q.snap_radius, q.allow_partial, engines[c])
 				if q.smooth and a.points.size() > 2:
-					a.points = _smooth(a.points, -1.0, 8, q.horizon, legs)
+					a.points = DotNpcNavSmooth.smooth(self, a.points, -1.0, 8, q.horizon, legs)
 				out.append(a)
 			return out
 		var slots := DotParallel.run(task, chunks, &"npc.paths", n)
@@ -629,186 +629,17 @@ var straight_width_ratio: float = 0.75:
 		if is_equal_approx(value, straight_width_ratio):
 			return
 		straight_width_ratio = value
-		_forget_legs()
-
-## Neighbours a point has when every cell round it is walkable (the grid's eight).
-const FULL_NEIGHBOURS := 8
+		DotNpcNavSmooth.forget_legs(self)
 
 
-## Whether an NPC can walk straight from [param a] to [param b].
-## A point graph has no polygons to raycast, so the corridor is sampled. Stricter than a raycast at a
-## doorway, deliberately: a wrong "yes" walks into a wall, a wrong "no" costs one corner.
+## Whether an NPC can walk straight from [param a] to [param b]. A point graph has no polygons to
+## raycast, so the corridor is sampled; see [DotNpcNavLine].
 func can_walk_straight(a: Vector3, b: Vector3, corridor: float = -1.0) -> bool:
-	if not is_ready():
-		return false
-
-	var width := data.point_radius if corridor < 0.0 else corridor
-		# No wider than three quarters of a cell: at the point radius a sample beside a corner snapped to a
-		# point across it and smoothing cut corners the graph goes round.
-	if data.grid_spacing > 0.0:
-		width = minf(width, data.grid_spacing * 0.75)
-	var distance := a.distance_to(b)
-
-	if distance <= 0.001:
-		return true
-
-	if _crosses_cut(a, b):
-		return false
-
-		# Connectivity, not proximity: "every sample is near some point" passes through a wall thin enough
-		# to have points on both sides. The builder refused to connect points across an obstacle, so ask
-		# whether the line stays inside the edges it drew; that is exact rather than a threshold.
-	var step := maxf(data.spacing() * 0.4, 0.05)
-	var steps := maxi(int(ceil(distance / step)), 1)
-
-	var previous := _nearest_passable(a, width)
-	if previous < 0 or not _sample_clear(a, previous):
-		return false
-
-	for i in range(1, steps + 1):
-		var probe := a.lerp(b, float(i) / float(steps))
-		var current := _nearest_passable(probe, width)
-
-		if current < 0 or not _sample_clear(probe, current):
-			return false
-
-		if current == previous:
-			continue
-
-		# Sampled at under half a cell, so the nearest point can only move to a
-		# neighbouring cell. If it moved somewhere the builder refused to connect,
-		# the line crossed something.
-		if not _are_neighbours(previous, current):
-			return false
-
-		previous = current
-
-	return true
+	return _line.can_walk_straight(self, a, b, corridor)
 
 
-var _cut_index: Dictionary = {}
-## Cells with a cut segment in them or in the eight round them: a line sample elsewhere has nothing to test.
-var _cut_near: Dictionary = {}
-var _cut_indexed := false
-var _surrounded_memo: Dictionary = {}
-
-
-## Whether the line a to b crosses an edge the data's prune cut (physics said a body cannot use it).
-## Indexed by cell on first use; a line only meets the segments in the cells it passes through.
 func _crosses_cut(a: Vector3, b: Vector3) -> bool:
-	if not _cut_indexed:
-		_cut_indexed = true
-		var all := data.cut_edges()
-
-		for k in range(0, all.size() - 1, 2):
-			var key := _cut_cell((all[k] + all[k + 1]) * 0.5)
-			var list: Array = _cut_index.get(key, [])
-			list.append(k)
-			_cut_index[key] = list
-
-		for key: Vector2i in _cut_index:
-			for dx in range(-1, 2):
-				for dz in range(-1, 2):
-					_cut_near[Vector2i(key.x + dx, key.y + dz)] = true
-
-	if _cut_index.is_empty():
-		return false
-
-	var cut := data.cut_edges()
-	var cell := _cut_size()
-	var steps := maxi(int(ceil(a.distance_to(b) / cell)), 1)
-	var seen: Dictionary = {}
-
-	for i in steps + 1:
-		var at := a.lerp(b, float(i) / steps)
-		var home := _cut_cell(at)
-
-		if not _cut_near.has(home):
-			continue
-
-		for dx in range(-1, 2):
-			for dz in range(-1, 2):
-				var key := Vector2i(home.x + dx, home.y + dz)
-
-				if seen.has(key):
-					continue
-
-				seen[key] = true
-
-				for k: int in _cut_index.get(key, []):
-					if _segments_cross(a, b, cut[k], cut[k + 1]):
-						return true
-
-	return false
-
-
-func _cut_size() -> float:
-	return maxf(data.grid_spacing * 2.0, 1.0)
-
-
-func _cut_cell(p: Vector3) -> Vector2i:
-	var size := _cut_size()
-	return Vector2i(floori(p.x / size), floori(p.z / size))
-
-
-## Whether two segments cross in the ground plane at heights within a metre of each other.
-static func _segments_cross(a: Vector3, b: Vector3, c: Vector3, d: Vector3) -> bool:
-	var r := Vector2(b.x - a.x, b.z - a.z)
-	var s := Vector2(d.x - c.x, d.z - c.z)
-	var denom := r.cross(s)
-
-	if absf(denom) < 0.00001:
-		return false
-
-	var ca := Vector2(c.x - a.x, c.z - a.z)
-	var t := ca.cross(s) / denom
-	var u := ca.cross(r) / denom
-
-	if t < 0.0 or t > 1.0 or u < 0.0 or u > 1.0:
-		return false
-
-	return absf(lerpf(a.y, b.y, t) - lerpf(c.y, d.y, u)) < 1.0
-
-
-func _sample_clear(at: Vector3, point: int) -> bool:
-	if data.grid_spacing <= 0.0:
-		return true
-
-	if at.distance_to(data.points[point]) <= data.grid_spacing * straight_width_ratio + 0.01:
-		return true
-
-	return _surrounded(point)
-
-
-## Whether the point has a neighbour in every 45 degree sector within two cells. A count cannot tell: extended
-## links keep it over [constant FULL_NEIGHBOURS] when a wall took the whole west side, and a line may graze that wall.
-func _surrounded(point: int) -> bool:
-	var known: Variant = _surrounded_memo.get(point)
-
-	if known != null:
-		return known
-
-	var here := data.points[point]
-	var reach := data.grid_spacing * 2.0
-	var seen := 0
-
-	for n in neighbours(point):
-		var d := data.points[n] - here
-		d.y = 0.0
-
-		if d.length() <= reach and d.length() > 0.001:
-			seen |= 1 << (int(floor((atan2(d.z, d.x) + PI) / (TAU / FULL_NEIGHBOURS))) % FULL_NEIGHBOURS)
-
-	var full := seen == (1 << FULL_NEIGHBOURS) - 1
-	_surrounded_memo[point] = full
-	return full
-
-
-func _are_neighbours(a: int, b: int) -> bool:
-	for n in neighbours(a):
-		if n == b:
-			return true
-	return false
+	return _line.crosses_cut(self, a, b)
 
 
 ## Removes the corners a grid put in a path: from each kept waypoint, drop everything up to the furthest one
@@ -816,35 +647,7 @@ func _are_neighbours(a: int, b: int) -> bool:
 func smooth_path(
 	path: PackedVector3Array, corridor: float = -1.0, lookahead: int = 8, horizon: int = 0
 ) -> PackedVector3Array:
-	return _smooth(path, corridor, lookahead, horizon, _leg_memo(corridor) if path.size() > 2 else null)
-
-
-func _smooth(path: PackedVector3Array, corridor: float, lookahead: int, horizon: int, legs: Variant) -> PackedVector3Array:
-	if path.size() <= 2:
-		return path
-
-	var out := PackedVector3Array()
-	out.append(path[0])
-
-	var anchor := 0
-	var stop := path.size() - 1 if horizon <= 0 else mini(horizon, path.size() - 1)
-
-	while anchor < stop:
-		var furthest := anchor + 1
-		var limit := mini(anchor + maxi(lookahead, 1), path.size() - 1)
-
-		for candidate in range(limit, anchor + 1, -1):
-			if _leg_walkable(legs, path[anchor], path[candidate], corridor):
-				furthest = candidate
-				break
-
-		out.append(path[furthest])
-		anchor = furthest
-
-	for rest in range(anchor + 1, path.size()):
-		out.append(path[rest])
-
-	return out
+	return DotNpcNavSmooth.smooth_path(self, path, corridor, lookahead, horizon)
 
 
 ## Whether [method smooth_path] remembers each leg's [method can_walk_straight] answer. A crowd
@@ -852,53 +655,8 @@ func _smooth(path: PackedVector3Array, corridor: float, lookahead: int, horizon:
 ## the graph or the filter changing must turn this off.
 var memo_legs: bool = true
 
-## Drops every remembered leg: the answers depend on [member straight_width_ratio].
-func _forget_legs() -> void:
-	for key: String in _native:
-		var astar: AStar3D = _native[key]
-		for meta: StringName in astar.get_meta_list():
-			if String(meta).begins_with("dot_legs"):
-				astar.remove_meta(meta)
-
-
 ## Legs remembered per filter graph before the memo starts again, so it cannot grow without end.
 const LEG_MEMO_MAX := 40000
-
-
-## The leg memo for the current filter and [param corridor], or null. It lives on that filter's
-## [AStar3D], so whatever rebuilds the native graph (a new filter, flags, links) forgets it too.
-func _leg_memo(corridor: float) -> Variant:
-	if not memo_legs or not use_native_search or not is_ready():
-		return null
-
-	var astar := _native_for(filter)
-	var key := &"dot_legs" if corridor < 0.0 else StringName("dot_legs_%s" % corridor)
-	var memo: Dictionary = astar.get_meta(key, {})
-
-	if memo.is_empty() or int(memo.get(&"count", 0)) > LEG_MEMO_MAX:
-		memo = {&"count": 0}
-		astar.set_meta(key, memo)
-
-	return memo
-
-
-func _leg_walkable(memo: Variant, a: Vector3, b: Vector3, corridor: float) -> bool:
-	if memo == null:
-		return can_walk_straight(a, b, corridor)
-
-	var row: Dictionary = memo.get(a, {})
-	var known: Variant = row.get(b)
-
-	if known != null:
-		return known
-
-	var walkable := can_walk_straight(a, b, corridor)
-
-	if row.is_empty():
-		memo[a] = row
-	row[b] = walkable
-	memo[&"count"] = int(memo[&"count"]) + 1
-	return walkable
 
 
 ## [method find_path] with [method smooth_path] applied. What a follower wants.

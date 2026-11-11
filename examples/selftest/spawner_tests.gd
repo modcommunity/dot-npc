@@ -171,3 +171,87 @@ func _test_navigable_spawn() -> void:
 
 	spawner.queue_free()
 	_done()
+
+
+const SPLIT_TICKS := 2000
+
+## The gather/decide/apply split: the same 2000-tick hash of every brain's intents and the NPCs' places with decide inline, again,
+## and on two workers with DotParallel.verify. Applying in NPC order is what makes the three agree.
+func _test_drive() -> void:
+	_section("a player's drive")
+	var drive := DotNpcDrive.new()
+	_check(not drive.active and drive.wish_velocity(5.0) == Vector3.ZERO, "idle: inactive and no wish")
+	drive.grab(&"p1")
+	drive.feed(Vector2(0, 1), 0.0, 1)
+	_check(drive.active and drive.wish_velocity(5.0).is_equal_approx(Vector3(0, 0, -5)), "forward at yaw 0 is -Z", str(drive.wish_velocity(5.0)))
+	drive.feed(Vector2(0, 1), PI * 0.5, 1)
+	_check(drive.wish_velocity(5.0).is_equal_approx(Vector3(-5, 0, 0)), "a quarter turn left walks -X", str(drive.wish_velocity(5.0)))
+	drive.feed(Vector2(3, 4), 0.0, 1)
+	_check(is_equal_approx(drive.move.length(), 1.0), "diagonal intent is clamped to 1")
+	_check(drive.take_pressed() == 1 and drive.take_pressed() == 0, "a press is an edge, taken once")
+	drive.feed(Vector2.ZERO, 0.0, 0)
+	drive.feed(Vector2.ZERO, 0.0, 1)
+	_check(drive.take_pressed() == 1, "and a release then a press is a new edge")
+
+	var brain := DotNpcBrain.new()
+	brain.drive = drive
+	brain.think(0.1)
+	_check(brain.age > 0.0, "a driven brain still ages")
+	drive.release()
+	_check(not drive.active and drive.holder == &"", "release clears the hold")
+	_done()
+
+
+func _test_think_split() -> void:
+	_section("split think")
+
+	var verify_before := DotParallel.verify
+	DotParallel.verify = true
+	var failures_before := DotParallel.verify_failures
+	var off := _split_run(0)
+	var off_again := _split_run(0)
+	var on := _split_run(2)
+	DotParallel.verify = verify_before
+
+	_check(off[1] == 24 * SPLIT_TICKS, "every split brain applied every tick", "%d applies" % off[1])
+	_check(off[0] != 0 and off[2] > 1, "the hash covers distinct intents", "%s" % [off])
+	_check(off[0] == off_again[0], "off against off: the same hash of 2000 ticks", "%d vs %d" % [off[0], off_again[0]])
+	_check(on[0] == off[0], "workers 2 against off: the same hash",
+		"%d vs %d%s" % [on[0], off[0], "" if DotParallel.resolve_workers(2) > 0 else " (no threads here: inline)"])
+	_check(DotParallel.verify_failures == failures_before, "and verify found no task that differs between runs")
+	_done()
+
+
+## Returns [hash, applies, distinct histories] of one scripted run.
+func _split_run(workers: int) -> Array:
+	var limits := _limits()
+	limits.world_budget = 0
+	limits.per_kind_cap = 0
+	var spawner := _spawner(limits)
+	var def := DotNpcDef.make(&"splitter", BODY)
+	def.brain_script_path = "res://fixtures/split_brain.gd"
+	def.max_health = 100.0
+	def.require_line_of_sight = false
+	spawner.catalogue.add(def)
+	spawner.think_workers = workers
+	var brains: Array = []
+
+	for i in 24:
+		var npc := spawner.spawn(&"splitter", Vector3(i * 1.5 - 18.0, 0, (i % 5) * 3.0 - 6.0))
+		if npc != null:
+			brains.append(npc.brain)
+
+	for t in SPLIT_TICKS:
+		spawner.tick(0.016)
+
+	var h := 0
+	var applies := 0
+	var distinct := {}
+
+	for b in brains:
+		h = hash([h, b.history, snappedf(b.npc.position().x, 0.001), snappedf(b.npc.position().z, 0.001)])
+		applies += b.ticks
+		distinct[b.history] = true
+
+	spawner.queue_free()
+	return [h, applies, distinct.size()]

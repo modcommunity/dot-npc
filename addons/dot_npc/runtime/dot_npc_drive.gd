@@ -2,9 +2,8 @@ class_name DotNpcDrive
 extends RefCounted
 
 ## A player's hands on an NPC body. While [member active], [method DotNpcBrain.think] calls
-## [method DotNpcBrain._npc_driven] instead of [method DotNpcBrain._npc_think], so the AI does
-## not run and the game moves the body from this intent. Plain numbers, so any input codec
-## (a dot-player-controller command, a bot) fills it the same way. Server only.
+## [method DotNpcBrain._npc_driven] instead of [method DotNpcBrain._npc_think]: the AI does not run
+## and the game moves the body from this intent (plain numbers, any input codec). Server only.
 
 ## Whether a player holds the body.
 var active: bool = false
