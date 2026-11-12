@@ -687,7 +687,8 @@ func _test_path_workers() -> void:
 	cut_q.from = Vector3(-18, 0, -18)
 	cut_q.to = Vector3(40, 0, 0)
 	cut_q.snap_radius = 3.0
-	cut_q.smooth = true
+	# Unsmoothed, so nothing on a worker asks crosses_cut: only prepare can have built the index.
+	cut_q.smooth = false
 	cut_graph.find_paths([cut_q], 4)
 	_check(not lazy and cut_graph._line._cut_indexed and not cut_graph._line._cut_index.is_empty(),
 		"find_paths builds the cut index before its workers smooth", "%s then %s" % [lazy, cut_graph._line._cut_indexed])
