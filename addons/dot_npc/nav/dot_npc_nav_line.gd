@@ -64,25 +64,22 @@ var _cut_index: Dictionary = {}
 var _cut_near: Dictionary = {}
 var _cut_indexed := false
 var _surrounded_memo: Dictionary = {}
+## [method DotNpcNavGraph.find_paths] smooths on worker threads, and they share the sector memo.
+var _memo_lock := Mutex.new()
+
+
+## Builds the cut index now. [method DotNpcNavGraph.find_paths] calls it before its workers start:
+## built lazily on two threads at once, one read a half-filled dictionary and the engine crashed.
+func prepare(g: DotNpcNavGraph) -> void:
+	if not _cut_indexed:
+		_index_cuts(g)
 
 
 ## Whether the line a to b crosses an edge the data's prune cut (physics said a body cannot use it).
 ## Indexed by cell on first use; a line only meets the segments in the cells it passes through.
 func crosses_cut(g: DotNpcNavGraph, a: Vector3, b: Vector3) -> bool:
 	if not _cut_indexed:
-		_cut_indexed = true
-		var all := g.data.cut_edges()
-
-		for k in range(0, all.size() - 1, 2):
-			var key := _cut_cell(g, (all[k] + all[k + 1]) * 0.5)
-			var list: Array = _cut_index.get(key, [])
-			list.append(k)
-			_cut_index[key] = list
-
-		for key: Vector2i in _cut_index:
-			for dx in range(-1, 2):
-				for dz in range(-1, 2):
-					_cut_near[Vector2i(key.x + dx, key.y + dz)] = true
+		_index_cuts(g)
 
 	if _cut_index.is_empty():
 		return false
@@ -113,6 +110,27 @@ func crosses_cut(g: DotNpcNavGraph, a: Vector3, b: Vector3) -> bool:
 						return true
 
 	return false
+
+
+func _index_cuts(g: DotNpcNavGraph) -> void:
+	var all := g.data.cut_edges()
+	var index: Dictionary = {}
+	var near: Dictionary = {}
+
+	for k in range(0, all.size() - 1, 2):
+		var key := _cut_cell(g, (all[k] + all[k + 1]) * 0.5)
+		var list: Array = index.get(key, [])
+		list.append(k)
+		index[key] = list
+
+	for key: Vector2i in index:
+		for dx in range(-1, 2):
+			for dz in range(-1, 2):
+				near[Vector2i(key.x + dx, key.y + dz)] = true
+
+	_cut_index = index
+	_cut_near = near
+	_cut_indexed = true
 
 
 func _cut_size(g: DotNpcNavGraph) -> float:
@@ -156,7 +174,9 @@ func sample_clear(g: DotNpcNavGraph, at: Vector3, point: int) -> bool:
 ## Whether the point has a neighbour in every 45 degree sector within two cells. A count cannot tell: extended
 ## links keep it over [constant FULL_NEIGHBOURS] when a wall took the whole west side, and a line may graze that wall.
 func _surrounded(g: DotNpcNavGraph, point: int) -> bool:
+	_memo_lock.lock()
 	var known: Variant = _surrounded_memo.get(point)
+	_memo_lock.unlock()
 
 	if known != null:
 		return known
@@ -173,7 +193,9 @@ func _surrounded(g: DotNpcNavGraph, point: int) -> bool:
 			seen |= 1 << (int(floor((atan2(d.z, d.x) + PI) / (TAU / FULL_NEIGHBOURS))) % FULL_NEIGHBOURS)
 
 	var full := seen == (1 << FULL_NEIGHBOURS) - 1
+	_memo_lock.lock()
 	_surrounded_memo[point] = full
+	_memo_lock.unlock()
 	return full
 
 
