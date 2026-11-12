@@ -128,6 +128,10 @@ var repath_interval_per_m: float = 0.0
 ## so that think follows the old path. A host copies dot-server's `sv_threads_npc` here.
 var path_workers: int = 0
 
+## Queue every repath and answer it after the brains think even at [member path_workers] 0, so a run
+## gets the same paths at any worker count. Off, 0 workers searches inline, a tick earlier than pooled.
+var deferred_paths: bool = false
+
 ## Worker threads for the decide step of brains that [method DotNpcBrain.splits_think] and are thread safe.
 ## 0 decides inline. The result is identical either way: apply runs in NPC order after the join.
 var think_workers: int = 0
@@ -757,6 +761,7 @@ func describe() -> Dictionary:
 		"seeded_by": "game" if seed_source.is_valid() else "spawn count",
 		"nav": nav.describe() if has_nav() else "none",
 		"path_workers": DotParallel.resolve_workers(path_workers),
+		"deferred_paths": deferred_paths,
 		"think_workers": DotParallel.resolve_workers(effective_think_workers()),
 		"limits": limits.describe_summary() if limits != null else "none",
 	}

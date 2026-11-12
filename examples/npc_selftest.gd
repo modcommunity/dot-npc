@@ -5,7 +5,7 @@ extends "res://examples/selftest/replication_tests.gd"
 ## a graph that joins a walkway to the floor below, a reclaim that deletes what is chasing someone. Real nodes, real tree.
 
 
-const CHECKS := 242 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2 + 3 + 2 + 3 + 2 + 11 + 4 + 2 + 2 + 8 + 5 + 8 + 2
+const CHECKS := 242 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2 + 3 + 2 + 3 + 2 + 11 + 4 + 2 + 2 + 8 + 5 + 8 + 2 + 4
 
 ## Sections entered against sections that ran to their last line. A runtime error inside a section aborts that
 ## function and nothing says so; a section that bailed early after a failed guard counts as unfinished on purpose.
@@ -703,6 +703,19 @@ func _test_path_workers() -> void:
 
 	_check(agree == 12, "and after answer_paths every path equals the inline one", "%d of 12" % agree)
 
+	# deferred_paths: queued at any worker count, so a run is the same run at 0 and 4 workers.
+	var deferred_off := _deferred_run(data, queries, 0)
+	var deferred_on := _deferred_run(data, queries, 4)
+	var deferred_again := _deferred_run(data, queries, 0)
+	_check(deferred_off[1], "deferred_paths queues the repath even at path_workers 0")
+	_check(deferred_off[2] > 12, "and the run repaths many times", "%d searches" % deferred_off[2])
+	_check(deferred_off[0] == deferred_again[0], "deferred, 0 workers twice: the same hash",
+		"%d vs %d" % [deferred_off[0], deferred_again[0]])
+	_check(deferred_on[0] == deferred_off[0] and deferred_on[2] == deferred_off[2],
+		"deferred, 4 workers against 0: the same hash and searches",
+		"%d vs %d, %d vs %d searches%s" % [deferred_on[0], deferred_off[0], deferred_on[2], deferred_off[2],
+			"" if threaded else " (no threads here: inline)"])
+
 	# Web, or no threads: the same setting resolves to 0 and path_toward searches inline.
 	DotPlatform._kind = DotPlatform.Kind.WEB
 	var web_workers := DotParallel.resolve_workers(4)
@@ -717,3 +730,49 @@ func _test_path_workers() -> void:
 	for s in spawners:
 		s.queue_free()
 	_done()
+
+
+## Returns [hash, queued at the first ask, searches] of a seeded walk with [member DotNpcSpawner.deferred_paths].
+func _deferred_run(data: DotNpcNavData, queries: Array, workers: int) -> Array:
+	var limits := _limits()
+	limits.spawn_snap_radius = 3.0
+	var spawner := _spawner(limits)
+	spawner.set_nav_data(data)
+	spawner.deferred_paths = true
+	spawner.path_workers = workers
+	spawner.repath_interval = 0.5
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 23
+	var npcs: Array = []
+	var paths: Array = []
+	var goals: Array = []
+
+	for i in 12:
+		npcs.append(spawner.spawn(&"walker", (queries[i] as DotNpcNavGraph.PathQuery).from))
+		paths.append(DotNpcPath.new())
+		goals.append((queries[i] as DotNpcNavGraph.PathQuery).to)
+
+	var h := 0
+	var queued := false
+	var searches_before := spawner.nav.searches
+
+	for t in 200:
+		for i in npcs.size():
+			var npc: DotNpcInstance = npcs[i]
+			if t % 40 == 0:
+				goals[i] = Vector3(rng.randf_range(-18, 44), 0, rng.randf_range(-18, 18))
+			var step := spawner.path_toward(npc, paths[i], goals[i])
+			if t == 0 and i == 0:
+				queued = (paths[i] as DotNpcPath).is_empty()
+			var body := npc.node as Node3D
+			var flat := Vector3(step.x - body.global_position.x, 0, step.z - body.global_position.z)
+			body.global_position += flat.limit_length(0.4)
+			h = hash([h, snappedf(body.global_position.x, 0.001), snappedf(body.global_position.z, 0.001)])
+		spawner.tick(0.05)
+
+	for p: DotNpcPath in paths:
+		h = hash([h, p.points, p.partial])
+
+	var searches := spawner.nav.searches - searches_before
+	spawner.queue_free()
+	return [h, queued, searches]

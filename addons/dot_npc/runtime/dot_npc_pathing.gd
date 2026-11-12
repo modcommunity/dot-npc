@@ -36,7 +36,7 @@ func path_toward(npc: DotNpcInstance, path: DotNpcPath, goal: Vector3) -> Vector
 	var now := s.now()
 	var due := path.needs_repath(now, goal, interval, drift)
 
-	if due and DotParallel.resolve_workers(s.path_workers) > 0:
+	if due and (s.deferred_paths or DotParallel.resolve_workers(s.path_workers) > 0):
 		_enqueue(npc, path, goal)
 	elif due:
 		# The filter is set per search, not held on the graph: one graph serves every NPC and a
