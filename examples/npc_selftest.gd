@@ -5,7 +5,7 @@ extends "res://examples/selftest/replication_tests.gd"
 ## a graph that joins a walkway to the floor below, a reclaim that deletes what is chasing someone. Real nodes, real tree.
 
 
-const CHECKS := 242 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2 + 3 + 2 + 3 + 2 + 11 + 4 + 2 + 2 + 8 + 5 + 8 + 2 + 4 + 1
+const CHECKS := 242 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2 + 3 + 2 + 3 + 2 + 11 + 4 + 2 + 2 + 8 + 5 + 8 + 2 + 4 + 1 + 1
 
 ## Sections entered against sections that ran to their last line. A runtime error inside a section aborts that
 ## function and nothing says so; a section that bailed early after a failed guard counts as unfinished on purpose.
@@ -676,6 +676,21 @@ func _test_path_workers() -> void:
 
 	_check(bad >= 0 and (scales.size() > 1 or DotParallel.resolve_workers(4) == 0) and scales.all(func(w: float) -> bool: return w == 6.0),
 		"mark_bad scales every native copy once, the original included", str(scales))
+
+	# Smoothing on workers asks crosses_cut; its index was built lazily on whichever thread asked
+	# first, and two workers building it at once crashed ZZ. find_paths builds it before they start.
+	var cut_data := builder.build(&"workers_cut", "digest")
+	cut_data.remember_cut_edges(PackedVector3Array([Vector3(30, 0, -4), Vector3(30, 0, 4)]))
+	var cut_graph := DotNpcNavGraph.new(cut_data)
+	var lazy := cut_graph._line._cut_indexed
+	var cut_q := DotNpcNavGraph.PathQuery.new()
+	cut_q.from = Vector3(-18, 0, -18)
+	cut_q.to = Vector3(40, 0, 0)
+	cut_q.snap_radius = 3.0
+	cut_q.smooth = true
+	cut_graph.find_paths([cut_q], 4)
+	_check(not lazy and cut_graph._line._cut_indexed and not cut_graph._line._cut_index.is_empty(),
+		"find_paths builds the cut index before its workers smooth", "%s then %s" % [lazy, cut_graph._line._cut_indexed])
 	graph.expire_bad(INF)
 
 	# The spawner: off finds inline as it always did; on queues and answers at the end of the think.

@@ -277,6 +277,7 @@ func find_paths(queries: Array, workers: int) -> void:
 		return
 
 	data.build_index()
+	_line.prepare(self)
 	var n := DotParallel.resolve_workers(workers) if use_native_search else 0
 	var groups: Array = []
 	var group_of: Dictionary = {}
