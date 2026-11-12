@@ -5,7 +5,7 @@ extends "res://examples/selftest/replication_tests.gd"
 ## a graph that joins a walkway to the floor below, a reclaim that deletes what is chasing someone. Real nodes, real tree.
 
 
-const CHECKS := 242 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2 + 3 + 2 + 3 + 2 + 11 + 4 + 2 + 2 + 8 + 5 + 8 + 2 + 4
+const CHECKS := 242 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2 + 3 + 2 + 3 + 2 + 11 + 4 + 2 + 2 + 8 + 5 + 8 + 2 + 4 + 1
 
 ## Sections entered against sections that ran to their last line. A runtime error inside a section aborts that
 ## function and nothing says so; a section that bailed early after a failed guard counts as unfinished on purpose.
@@ -664,6 +664,19 @@ func _test_path_workers() -> void:
 			"and counts searches and failures as they do, and restores the filter (%d workers)" % workers,
 			"%s against %s" % [Vector2i(graph.searches, graph.failures) - searched, counted]
 		)
+
+	# A costed-up point after the copies exist: every engine (the original is also first in its
+	# copies list) carries the factor once, so worker 0 and worker 3 answer alike.
+	var bad := graph.mark_bad(Vector3(0, 0, 0), INF, 6.0, 3.0)
+	var scales: Array = []
+
+	# The unfiltered engines: weight 1 everywhere, so 6 after the mark.
+	for astar: AStar3D in (graph._copies[graph._native_key(null)] as Dictionary)["list"]:
+		scales.append(snappedf(astar.get_point_weight_scale(bad), 0.001))
+
+	_check(bad >= 0 and (scales.size() > 1 or DotParallel.resolve_workers(4) == 0) and scales.all(func(w: float) -> bool: return w == 6.0),
+		"mark_bad scales every native copy once, the original included", str(scales))
+	graph.expire_bad(INF)
 
 	# The spawner: off finds inline as it always did; on queues and answers at the end of the think.
 	var limits := _limits()

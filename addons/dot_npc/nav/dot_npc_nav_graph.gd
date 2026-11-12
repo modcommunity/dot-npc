@@ -80,15 +80,18 @@ func bad_count() -> int:
 
 # The cached searches carry the weight (each has its own filter's cost in it, so scale by the change).
 func _apply_bad(index: int, old: float, factor: float) -> void:
-	var lists: Array = []
+	# By object: a copies list starts with the original, which _native holds too, and scaling it
+	# twice gave worker 0 the factor squared and the other workers the factor once.
+	var lists: Dictionary = {}
 
 	for key: String in _native:
-		lists.append(_native[key])
+		lists[(_native[key] as AStar3D).get_instance_id()] = _native[key]
 
 	for key: String in _copies:
-		lists.append_array((_copies[key] as Dictionary)["list"])
+		for astar: AStar3D in (_copies[key] as Dictionary)["list"]:
+			lists[astar.get_instance_id()] = astar
 
-	for astar: AStar3D in lists:
+	for astar: AStar3D in lists.values():
 		if astar.has_point(index):
 			astar.set_point_weight_scale(index, astar.get_point_weight_scale(index) / old * factor)
 
