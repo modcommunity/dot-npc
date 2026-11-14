@@ -65,12 +65,12 @@ func _npc_think(delta: float) -> void:
 | `world_budget` | 96 | Most NPCs alive at once, counted in each definition's `cost`. 0 = unlimited. |
 | `per_kind_cap` | 24 | Most of any one kind. Stops a director spending the whole budget on the cheapest kind. 0 = unlimited. |
 | `spawn_interval` | 0.1 | Seconds between spawns from one spawner. 0 = no wait. |
-| `burst_cap` | 12 | Most NPCs one `spawn_group` call may create (1 to 200). |
+| `burst_cap` | 12 | Most NPCs one `spawn_group` call may create. Default 12, 0 = unlimited. |
 | `reclaim_distance` | 90.0 | Metres beyond which an NPC with no target may be removed. 0 = never. |
 | `reclaim_grace` | 8.0 | Seconds an NPC must have gone unseen and un-targeted before it may be removed. |
 | `clean_up_on_leave` | true | Remove the NPCs a player owns when that player leaves. |
 | `sense_period_ticks` | 4 | Ticks between one NPC's perception passes. 1 = every tick. |
-| `sense_candidate_cap` | 32 | Most candidate targets one perception pass considers, nearest first (1 to 256). |
+| `sense_candidate_cap` | 32 | Most candidate targets one perception pass considers, nearest first. Default 32, 0 = unlimited. |
 | `sense_quiet_mult` | 1 | An NPC with no target senses this many times less often. 1 = off. Keep it at 2 to 4 if used. |
 | `require_navigable_spawn` | true | A spawn point must be on the map's navigation data. |
 | `spawn_snap_radius` | 4.0 | Metres to search for a navigable spot near a requested point. |

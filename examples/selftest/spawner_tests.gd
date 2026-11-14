@@ -24,8 +24,37 @@ func _test_spawning() -> void:
 		positions[str(one.position().snapped(Vector3.ONE * 0.01))] = true
 
 	_check(positions.size() == 5, "and no two of them are in the same place")
-
 	spawner.queue_free()
+
+	# No hard caps: burst_cap 0 is unlimited, a positive one still caps.
+	var open := _limits()
+	open.world_budget = 0
+	open.per_kind_cap = 0
+	open.burst_cap = 0
+	var wide := _spawner(open)
+	_check(wide.spawn_group(&"walker", Vector3.ZERO, 30, 6.0).size() == 30, "burst_cap 0 spawns the whole group")
+	open.burst_cap = 3
+	_check(wide.spawn_group(&"walker", Vector3(50, 0, 0), 30, 6.0).size() == 3, "and burst_cap 3 still caps it")
+	open.burst_cap = -1
+	_check(not open.validate().ok, "a negative burst_cap is refused")
+	wide.queue_free()
+
+	# sense_candidate_cap 0 ranks every candidate in reach.
+	var spots := PackedVector3Array()
+	for i in 40:
+		spots.append(Vector3(float(i) + 1.0, 0, 0))
+	var loud := PackedFloat64Array()
+	loud.resize(40)
+	var sides := PackedInt32Array()
+	sides.resize(40)
+	sides.fill(1)
+	var ranked: Array = DotNpcSenses.rank_many(0, 1, PackedVector3Array([Vector3.ZERO]), PackedFloat64Array([100.0]),
+		PackedFloat64Array([0.0]), PackedInt32Array([0]), spots, loud, sides, 0)
+	_check((ranked[0] as PackedInt32Array).size() == 40, "candidate cap 0 ranks all 40", str((ranked[0] as PackedInt32Array).size()))
+	ranked = DotNpcSenses.rank_many(0, 1, PackedVector3Array([Vector3.ZERO]), PackedFloat64Array([100.0]),
+		PackedFloat64Array([0.0]), PackedInt32Array([0]), spots, loud, sides, 4)
+	_check((ranked[0] as PackedInt32Array).size() == 4 and (ranked[0] as PackedInt32Array)[0] == 0,
+		"and cap 4 keeps the nearest four")
 	_done()
 
 

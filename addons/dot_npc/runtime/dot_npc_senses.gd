@@ -235,7 +235,7 @@ static func reach_of(npc: DotNpcInstance) -> float:
 
 
 ## The candidates an NPC at [param here] could perceive by range alone, nearest first, at most
-## [param cap]: [method rank_many] for one NPC.
+## [param cap] (0 = all of them): [method rank_many] for one NPC.
 static func rank(here: Vector3, sight: float, hearing: float, own_faction: int,
 		packed: Packed, cap: int) -> PackedInt32Array:
 	return rank_many(0, 1, PackedVector3Array([here]), PackedFloat64Array([sight]),
@@ -250,7 +250,7 @@ static func rank_many(from: int, to: int, here: PackedVector3Array, sight: Packe
 		loudness: PackedFloat64Array, factions: PackedInt32Array, cap: int) -> Array:
 	var out: Array = []
 	var count := positions.size()
-	var keep := maxi(cap, 1)
+	var unlimited := cap <= 0
 
 	for j in range(from, to):
 		var at := here[j]
@@ -277,7 +277,7 @@ static func rank_many(from: int, to: int, here: PackedVector3Array, sight: Packe
 
 		keys.sort()
 		var order := PackedInt32Array()
-		order.resize(mini(keys.size(), keep))
+		order.resize(keys.size() if unlimited else mini(keys.size(), cap))
 
 		for r in order.size():
 			order[r] = keys[r] & 0xFFFFF

@@ -383,7 +383,7 @@ func seed_for(subject: int, from_game: bool = false) -> int:
 
 
 ## Spawns up to [param count] of one kind around [param at]. Returns what was made.
-## Capped by [member DotNpcLimits.burst_cap]: a director asking for a wave versus a bug asking for ten thousand.
+## Capped by [member DotNpcLimits.burst_cap] (0 = unlimited): a director asking for a wave versus a bug asking for ten thousand.
 func spawn_group(
 	npc_id: StringName,
 	at: Vector3,

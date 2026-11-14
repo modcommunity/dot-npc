@@ -19,8 +19,9 @@ extends DotConfig
 ## Stops a runaway director: a budget alone does not when it kills one and spawns one every tick.
 @export_range(0.0, 10.0, 0.01) var spawn_interval: float = 0.1
 
-## Most NPCs one call to [method DotNpcSpawner.spawn_group] may create.
-@export_range(1, 200, 1) var burst_cap: int = 12
+## Most NPCs one call to [method DotNpcSpawner.spawn_group] may create. Default 12, 0 = unlimited
+## (the world budget and per-kind cap still apply).
+@export_range(0, 200, 1, "or_greater") var burst_cap: int = 12
 
 @export_group("Lifetime")
 
@@ -45,7 +46,8 @@ extends DotConfig
 
 ## Most candidate targets one perception pass will consider.
 ## A cap, not a promise: the nearest go first, so lowering it only hides a distant target.
-@export_range(1, 256, 1) var sense_candidate_cap: int = 32
+## Default 32, 0 = unlimited (every candidate in reach is ranked; the pass still stops at the first one perceived).
+@export_range(0, 256, 1, "or_greater") var sense_candidate_cap: int = 32
 
 ## An NPC with no target whose last pass found nothing within reach senses every
 ## `sense_period_ticks * sense_quiet_mult` ticks. 1 = off.
@@ -85,6 +87,13 @@ func validate() -> DotResult:
 			DotError.CODE_INVALID,
 			"per_kind_cap exceeds world_budget, so it can never be reached.",
 			"%d vs %d" % [per_kind_cap, world_budget]
+		)
+
+	if burst_cap < 0 or sense_candidate_cap < 0:
+		return DotResult.fail(
+			DotError.CODE_INVALID,
+			"burst_cap and sense_candidate_cap must be 0 (unlimited) or a count.",
+			"%d, %d" % [burst_cap, sense_candidate_cap]
 		)
 
 	if require_navigable_spawn and spawn_snap_radius <= 0.0:

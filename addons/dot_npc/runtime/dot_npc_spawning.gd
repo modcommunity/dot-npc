@@ -192,7 +192,7 @@ func _seed_npc(npc: DotNpcInstance) -> int:
 
 
 ## Spawns up to [param count] of one kind around [param at]. Returns what was made.
-## Capped by [member DotNpcLimits.burst_cap]: a director asking for a wave versus a bug asking for ten thousand.
+## Capped by [member DotNpcLimits.burst_cap] (0 = unlimited): a director asking for a wave versus a bug asking for ten thousand.
 func spawn_group(
 	npc_id: StringName,
 	at: Vector3,
@@ -201,7 +201,7 @@ func spawn_group(
 	owner_id: StringName = &""
 ) -> Array[DotNpcInstance]:
 	var out: Array[DotNpcInstance] = []
-	var wanted := count if s.limits == null else mini(count, s.limits.burst_cap)
+	var wanted := count if s.limits == null or s.limits.burst_cap <= 0 else mini(count, s.limits.burst_cap)
 
 	for i in wanted:
 				# A deterministic ring, not random jitter: two servers replaying the same decisions place a
