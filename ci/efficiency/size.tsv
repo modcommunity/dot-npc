@@ -1,4 +1,4 @@
 # size
 # Baselines only shrink: scripts/<gate> --update lowers or drops entries and refuses to add.
-examples/npc_selftest.gd::_test_path_workers	136
+examples/npc_selftest.gd::_test_path_workers	131
 examples/npc_selftest.gd::_test_spawner_pathing	130
