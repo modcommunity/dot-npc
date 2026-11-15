@@ -1,4 +1,4 @@
-Computer-controlled characters for a Godot 4 game. dot-npc gives you a catalogue of NPC definitions, a population budget that keeps a server alive, perception that sticks to one target instead of flickering between two, and navigation generated from the constants a code-built map was drawn from. It needs only [dot-core](https://github.com/modcommunity/dot-core). Part of TMC's open source **Dot** collection (MIT licence).
+Computer-controlled characters for a Godot 4 game. dot-npc gives you a catalogue of NPC definitions, a population budget that keeps a server alive, perception that sticks to one target instead of flickering between two, and navigation generated from the constants a code-built map was drawn from. It needs only [dot-core](https://github.com/gamespice-platform/core). Part of TMC's open source **Dot** collection (MIT licence).
 
 > Built with Claude Code. Every addon has a headless test suite and the suites pass, but little of this has met real players yet. Please report rough edges.
 
@@ -104,8 +104,8 @@ var spot := nav.cover_position_from(npc.position(), enemy_position)
 | Addon | Role |
 | --- | --- |
 | dot-npc | What an NPC is: definitions, budget, perception, navigation. |
-| [dot-npc-ai](https://github.com/modcommunity/dot-npc-ai) | How one decides: behaviour trees, state machines, steering, squads. |
-| [dot-npc-ai-director](https://github.com/modcommunity/dot-npc-ai-director) | Pacing: population and the build-up, peak, fade, relax cycle. |
+| [dot-npc-ai](https://github.com/gamespice-platform/npc-ai) | How one decides: behaviour trees, state machines, steering, squads. |
+| [dot-npc-ai-director](https://github.com/gamespice-platform/npc-ai-director) | Pacing: population and the build-up, peak, fade, relax cycle. |
 
 Each is separate, so a game that wants a catalogue and a budget does not install a decision engine.
 
