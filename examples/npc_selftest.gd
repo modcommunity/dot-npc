@@ -5,12 +5,12 @@ extends "res://examples/selftest/path_worker_tests.gd"
 ## a graph that joins a walkway to the floor below, a reclaim that deletes what is chasing someone. Real nodes, real tree.
 
 
-const CHECKS := 243 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2 + 3 + 2 + 3 + 2 + 11 + 4 + 2 + 2 + 8 + 5 + 8 + 2 + 4 + 1 + 1 + 5
+const CHECKS := 243 + 23 + 15 + 6 + 3 + 4 + 4 + 3 + 13 + 4 + 2 + 11 + 3 + 3 + 3 + 2 + 3 + 2 + 3 + 2 + 11 + 4 + 2 + 2 + 8 + 5 + 8 + 2 + 4 + 1 + 1 + 5 + 5
 
 ## Sections entered against sections that ran to their last line. A runtime error inside a section aborts that
 ## function and nothing says so; a section that bailed early after a failed guard counts as unfinished on purpose.
 ## CHECKS is the other half; see docs/testing.md.
-const SECTIONS := 44
+const SECTIONS := 45
 
 func _ready() -> void:
 	DotLog.set_level(DotLog.Level.ERROR)
@@ -57,6 +57,7 @@ func _run() -> void:
 	_test_spawner_pathing()
 	_test_path_workers()
 	_test_think_split()
+	_test_pacing()
 	_test_drive()
 	_test_brains()
 	_test_stable_seeds()

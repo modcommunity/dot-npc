@@ -19,7 +19,14 @@ var age: float = 0.0
 var path: DotNpcPath = null
 
 ## A player's hold on this body (see [DotNpcDrive]); null or inactive means the AI runs. Set by the game.
-var drive: DotNpcDrive = null
+## Taking or letting go of the body tells the spawner, which paces a driven brain's ticks no longer.
+var drive: DotNpcDrive = null:
+	set(value):
+		var changed := (drive == null) != (value == null)
+		drive = value
+
+		if changed and npc != null and director != null and director.has_method(&"pace_changed"):
+			director.pace_changed(npc)
 
 
 
@@ -56,6 +63,37 @@ func think(delta: float) -> void:
 ## every such brain's gather, then every decide (on workers when [member DotNpcSpawner.think_workers]), then every apply.
 func splits_think() -> bool:
 	return false
+
+
+## Whether this brain thinks once every few ticks and lets the spawner count them ([member DotNpcSpawner.pacing]).
+## A brain that does overrides [method think_paced], [method _pace_take] and [method _pace_give], and calls
+## [method pace_every] when it changes its interval outside its own think. Never while a drive is held.
+func paces() -> bool:
+	return false
+
+
+## A paced think: [param owed] is the seconds since its last one. Returns how many ticks until the next (1 or more).
+func think_paced(owed: float) -> int:
+	age += owed
+	_npc_think(owed)
+	return 1
+
+
+## The brain's own counters [ticks since its last think, seconds owed, think every], handed to the spawner when
+## pacing starts.
+func _pace_take() -> Array:
+	return [0, 0.0, 1]
+
+
+## The counters handed back when pacing stops, so the brain counts on from them.
+func _pace_give(_since: int, _owed: float, _every: int) -> void:
+	pass
+
+
+## Tells the spawner this brain now thinks every [param every] ticks (set outside its own think).
+func pace_every(every: int) -> void:
+	if npc != null and director != null and director.has_method(&"pace_every"):
+		director.pace_every(npc, every)
 
 
 ## Whether [method _npc_decide] is pure enough for a worker thread. Opt-in: a wrong answer here is wrong data, not a crash.

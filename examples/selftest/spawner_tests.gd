@@ -284,3 +284,88 @@ func _split_run(workers: int) -> Array:
 
 	spawner.queue_free()
 	return [h, applies, distinct.size()]
+
+
+const PACE_TICKS := 1500
+
+## Think pacing: brains that think every few ticks and stagger, possess, free, remove and spawn each other mid-tick
+## give the same log of thoughts (who, when, with how many seconds) with pacing off, counted by the script pacer,
+## counted natively (checked against the script call for call), and toggled on and off every 97 ticks.
+func _test_pacing() -> void:
+	_section("think pacing")
+
+	var off := _pace_run(false, false, 0)
+	var thoughts := 0
+	var kinds := {}
+	for e in off:
+		kinds[e[0]] = true
+		if e[0] == "think":
+			thoughts += 1
+	_check(thoughts > 1000 and kinds.size() >= 6, "the run thinks and does every kind of event",
+		"%d thoughts, %s" % [thoughts, kinds.keys()])
+
+	var script := _pace_run(true, false, 0)
+	_check(script == off, "script pacing: the same log as each brain counting", _pace_diff(script, off))
+
+	var toggled := _pace_run(true, false, 97)
+	_check(toggled == off, "pacing toggled every 97 ticks: the same log", _pace_diff(toggled, off))
+
+	# Five checks either way (CHECKS): with dot-sim the native pacer, without it the fallback when native is asked for.
+	if ClassDB.class_exists(&"DotSimThinkPacer"):
+		var checks := [0, 0]
+		var native := _pace_run(true, true, 0, checks)
+		var native_toggled := _pace_run(true, true, 97)
+		_check(native == off and native_toggled == off, "native pacing (and toggled every 97 ticks): the same log",
+			"%s / %s" % [_pace_diff(native, off), _pace_diff(native_toggled, off)])
+		_check(checks[0] > 1000 and checks[1] == 0, "and verify matched the script pacer call for call",
+			"%d checked, %d differ" % checks)
+	else:
+		var flags := [false]
+		var fallback := _pace_run(true, true, 0, [], flags)
+		_check(fallback == off, "native asked for without dot-sim: script pacing, the same log", _pace_diff(fallback, off))
+		_check(not flags[0], "and the spawner says it is not native")
+
+	_done()
+
+
+func _pace_diff(a: Array, b: Array) -> String:
+	for i in mini(a.size(), b.size()):
+		if a[i] != b[i]:
+			return "entry %d: %s vs %s" % [i, a[i], b[i]]
+	return "%d vs %d entries" % [a.size(), b.size()]
+
+
+func _pace_run(pacing: bool, native: bool, toggle_every: int, checks: Array = [], native_seen: Array = []) -> Array:
+	var limits := _limits()
+	limits.world_budget = 0
+	limits.per_kind_cap = 0
+	limits.spawn_interval = 0.0
+	var spawner := _spawner(limits)
+	var def := DotNpcDef.make(&"pacer", BODY)
+	def.brain_script_path = "res://fixtures/paced_brain.gd"
+	def.max_health = 100.0
+	def.require_line_of_sight = false
+	spawner.catalogue.add(def)
+	spawner.pacing = pacing
+	spawner.pacing_native = native
+	spawner.pacing_verify = native and checks.size() == 2
+	spawner.set_meta(&"pace_log", [])
+
+	for i in 30:
+		spawner.spawn(&"pacer", Vector3(i * 1.5 - 22.0, 0, (i % 5) * 3.0 - 6.0))
+
+	for t in PACE_TICKS:
+		if toggle_every > 0 and t % toggle_every == 0 and t > 0:
+			spawner.pacing = not spawner.pacing
+		spawner.tick(0.016)
+
+	if native_seen.size() == 1:
+		native_seen[0] = spawner.pacing_is_native()
+
+	if checks.size() == 2:
+		checks[0] = spawner.pacing_checked
+		checks[1] = spawner.pacing_mismatches
+
+	var out: Array = spawner.get_meta(&"pace_log", [])
+	spawner.queue_free()
+	return out

@@ -141,6 +141,7 @@ func _adopt(def: DotNpcDef, body: Node, owner_id: StringName) -> DotNpcInstance:
 	npc.seed = _seed_npc(npc)
 
 	s._npcs[npc.instance_id] = npc
+	s._pacing.added(npc)
 	s._by_kind[def.id] = int(s._by_kind.get(def.id, 0)) + 1
 
 	if not s._by_owner.has(owner_id):
@@ -311,5 +312,6 @@ func attach_brain(npc: DotNpcInstance) -> DotResult:
 
 	npc.brain = made
 	(made as DotNpcBrain).bind(npc, s)
+	s._pacing.changed(npc, true)
 
 	return DotResult.success(made)

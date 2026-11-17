@@ -143,7 +143,23 @@ func effective_think_workers() -> int:
 	return limits.think_workers
 
 
+## Count the ticks of brains that [method DotNpcBrain.paces] in one batch per tick, and call only the ones due
+## (see [DotNpcPacing]). Off, every brain is called every tick and counts for itself. Same thoughts either way.
+var pacing: bool = false
+
+## Hold the pacing natively (dot-sim's `DotSimThinkPacer`) when it is loaded; the script pacer otherwise.
+var pacing_native: bool = true
+
+## Check every native pacer answer bit for bit against the script pacer ([member pacing_mismatches]); for suites.
+var pacing_verify: bool = false
+
+## Pacer answers compared, and how many differed, under [member pacing_verify].
+var pacing_checked: int = 0
+var pacing_mismatches: int = 0
+
+
 var _pathing := DotNpcPathing.new(self)
+var _pacing := DotNpcPacing.new(self)
 var _perception := DotNpcPerception.new(self)
 var _spawning := DotNpcSpawning.new(self)
 
@@ -304,36 +320,32 @@ func tick(delta: float) -> void:
 
 
 func _think(delta: float) -> void:
-	# A copy, because a brain may kill its NPC — a suicide bomber is the obvious one —
-	# and removing from the dictionary being iterated skips every other NPC.
-	var ids: Array = _npcs.keys()
 	var split: Array = []
 	var gathered: Array = []
+	_pacing.sync()
 
-	for id in ids:
-		var found: Variant = _npcs.get(id)
-
-		if not (found is DotNpcInstance):
-			continue
-
-		var npc: DotNpcInstance = found
-
-		if not npc.is_alive() or npc.brain == null:
-			continue
-
-		var brain := npc.brain as DotNpcBrain
-
-		if brain.splits_think():
-			brain.age += delta
-			split.append(brain)
-			gathered.append(brain._npc_gather(delta))
-		else:
-			brain.think(delta)
+	_pacing.think(delta, split, gathered)
 
 	if not split.is_empty():
 		_decide_and_apply(split, gathered)
 
 	answer_paths()
+
+
+## [param npc]'s brain set its think interval to [param every] outside its own think (a stagger); see
+## [method DotNpcBrain.pace_every]. Nothing to do unless [member pacing] is on.
+func pace_every(npc: DotNpcInstance, every: int) -> void:
+	_pacing.every(npc, every)
+
+
+## [param npc]'s brain may have started or stopped pacing (a drive taken or let go).
+func pace_changed(npc: DotNpcInstance) -> void:
+	_pacing.changed(npc)
+
+
+## Whether pacing is on and held natively, as of the last tick.
+func pacing_is_native() -> bool:
+	return _pacing.native()
 
 
 ## Decide for every gathered brain (pooled when allowed and every brain is thread safe), then apply in gather order.
@@ -495,6 +507,7 @@ func remove(instance_id: int, reason: StringName = REASON_ADMIN) -> bool:
 	var npc: DotNpcInstance = found
 
 	_npcs.erase(instance_id)
+	_pacing.removed(npc)
 
 	if _by_kind.has(npc.def.id):
 		var left := int(_by_kind[npc.def.id]) - 1
