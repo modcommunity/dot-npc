@@ -158,10 +158,12 @@ var pacing_checked: int = 0
 var pacing_mismatches: int = 0
 
 
-var _pathing := DotNpcPathing.new(self)
-var _pacing := DotNpcPacing.new(self)
-var _perception := DotNpcPerception.new(self)
-var _spawning := DotNpcSpawning.new(self)
+# The helpers by uid, not by name: each names this class back, and a script loop stays in memory
+# for good (Godot 4.7). Their classes: DotNpcPathing, DotNpcPacing, DotNpcPerception, DotNpcSpawning.
+var _pathing: RefCounted = load("uid://b0h67pyeqben").new(self)
+var _pacing: RefCounted = load("uid://dvdkgpmjthhws").new(self)
+var _perception: RefCounted = load("uid://cl46tpccxr78f").new(self)
+var _spawning: RefCounted = load("uid://bsyirk2646i14").new(self)
 
 ## Instance id -> DotNpcInstance.
 var _npcs: Dictionary = {}

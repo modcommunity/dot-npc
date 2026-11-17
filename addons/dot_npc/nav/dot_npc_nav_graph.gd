@@ -43,8 +43,17 @@ var _copies: Dictionary = {}
 ## Point index -> [expires_at, factor]: places where a walker stalled, costed up for everybody until they expire.
 var _bad: Dictionary = {}
 
+# DotNpcNavLine and DotNpcNavSmooth by uid, not by name: both name this class back, and a script
+# loop stays in memory for good (Godot 4.7).
 ## Caches for [method can_walk_straight] and the cut edges.
-var _line := DotNpcNavLine.new()
+var _line: RefCounted = load("uid://b67a3ugh5u6dt").new()
+static var _smooth_script: Script = null
+
+
+static func _smooth() -> Script:
+	if _smooth_script == null:
+		_smooth_script = load("uid://dde41xussakjv")
+	return _smooth_script
 
 
 ## Makes arriving at the point nearest [param at] cost [param factor] times as much until [param until] (the caller's clock), so
@@ -97,6 +106,8 @@ func _apply_bad(index: int, old: float, factor: float) -> void:
 
 
 func _init(p_data: DotNpcNavData = null) -> void:
+	# Loaded here, on the building thread, before any path worker smooths.
+	var _s := _smooth()
 	if p_data != null:
 		rebuild(p_data)
 
@@ -299,14 +310,14 @@ func find_paths(queries: Array, workers: int) -> void:
 		var chunks := mini(engines.size(), group.size())
 		var size := ceili(float(group.size()) / chunks)
 		# The leg memo is one dictionary, so only an inline run may write it.
-		var legs: Variant = DotNpcNavSmooth.leg_memo(self, -1.0) if n <= 0 else null
+		var legs: Variant = _smooth().leg_memo(self, -1.0) if n <= 0 else null
 		var task := func(c: int) -> Array:
 			var out: Array = []
 			for i in range(c * size, mini(group.size(), (c + 1) * size)):
 				var q: PathQuery = group[i]
 				var a := _plan(q.from, q.to, q.snap_radius, q.allow_partial, engines[c])
 				if q.smooth and a.points.size() > 2:
-					a.points = DotNpcNavSmooth.smooth(self, a.points, -1.0, 8, q.horizon, legs)
+					a.points = _smooth().smooth(self, a.points, -1.0, 8, q.horizon, legs)
 				out.append(a)
 			return out
 		var slots := DotParallel.run(task, chunks, &"npc.paths", n)
@@ -633,7 +644,7 @@ var straight_width_ratio: float = 0.75:
 		if is_equal_approx(value, straight_width_ratio):
 			return
 		straight_width_ratio = value
-		DotNpcNavSmooth.forget_legs(self)
+		_smooth().forget_legs(self)
 
 
 ## Whether an NPC can walk straight from [param a] to [param b]. A point graph has no polygons to
@@ -651,7 +662,7 @@ func _crosses_cut(a: Vector3, b: Vector3) -> bool:
 func smooth_path(
 	path: PackedVector3Array, corridor: float = -1.0, lookahead: int = 8, horizon: int = 0
 ) -> PackedVector3Array:
-	return DotNpcNavSmooth.smooth_path(self, path, corridor, lookahead, horizon)
+	return _smooth().smooth_path(self, path, corridor, lookahead, horizon)
 
 
 ## Whether [method smooth_path] remembers each leg's [method can_walk_straight] answer. A crowd

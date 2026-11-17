@@ -53,7 +53,7 @@ func _check_copies_and_cut_index(graph: DotNpcNavGraph, builder: DotNpcNavBuilde
 	var cut_data := builder.build(&"workers_cut", "digest")
 	cut_data.remember_cut_edges(PackedVector3Array([Vector3(30, 0, -4), Vector3(30, 0, 4)]))
 	var cut_graph := DotNpcNavGraph.new(cut_data)
-	var lazy := cut_graph._line._cut_indexed
+	var lazy: bool = cut_graph._line._cut_indexed
 	var cut_q := DotNpcNavGraph.PathQuery.new()
 	cut_q.from = Vector3(-18, 0, -18)
 	cut_q.to = Vector3(40, 0, 0)
