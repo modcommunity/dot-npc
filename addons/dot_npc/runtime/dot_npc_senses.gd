@@ -48,6 +48,26 @@ var now: float = 0.0
 
 var sight_checks: int = 0
 var los_casts: int = 0
+
+## Runs [DotNpcPerception]'s whole pass (ranking and [method decide]) in dot-sim's native
+## `DotSimSenses` when that library is loaded: the same targets, timestamps, rays and counters, to
+## the bit. Off, or no library (the web), keeps this script. A subclass that overrides [method decide]
+## or [method _perceives_at] always keeps the script.
+var native_enabled: bool = false
+
+## With [member native_enabled]: runs the script pass as well and counts in
+## [member native_mismatches] every NPC whose native answer differs (the script's answer is kept).
+var native_verify: bool = false
+
+## NPCs (and counter totals) the native pass answered differently from the script under [member native_verify].
+var native_mismatches: int = 0
+
+## NPCs decided by the native pass (or checked against it under [member native_verify]).
+var native_decided: int = 0
+
+const NATIVE_CLASS := &"DotSimSenses"
+
+var _native: Object = null
 var _ray := PhysicsRayQueryParameters3D.new()
 var _blockers: Array = []
 var _next_blocker: int = 1
@@ -195,6 +215,8 @@ class Packed:
 	var positions := PackedVector3Array()
 	var loudness := PackedFloat64Array()
 	var factions := PackedInt32Array()
+	## Each candidate's id as the index of the first candidate with it (-1 for a missing one).
+	var firsts := PackedInt32Array()
 	var _faction_ids: Dictionary = {}
 	var _index: Dictionary = {}
 
@@ -203,6 +225,7 @@ class Packed:
 		positions.resize(n)
 		loudness.resize(n)
 		factions.resize(n)
+		firsts.resize(n)
 		_faction_ids.clear()
 		_index.clear()
 
@@ -212,13 +235,13 @@ class Packed:
 			if cand == null:
 				factions[i] = -2
 				loudness[i] = 0.0
+				firsts[i] = -1
 				continue
 
 			positions[i] = cand.position
 			loudness[i] = cand.loudness
 			factions[i] = _faction_ids.get_or_add(cand.faction, _faction_ids.size())
-			if not _index.has(cand.id):
-				_index[cand.id] = i
+			firsts[i] = _index.get_or_add(cand.id, i)
 
 	## The faction's number in [member factions], or -1 when no candidate has it.
 	func faction_of(faction: StringName) -> int:
@@ -420,6 +443,34 @@ func _decide_held(npc: DotNpcInstance, candidates: Array, order: PackedInt32Arra
 			break
 
 	return npc.target_id
+
+
+## The native pass, configured with these settings, or null when it is off, not loaded, or this is a subclass.
+func native() -> Object:
+	if not native_enabled or get_script() != DotNpcSenses or not ClassDB.class_exists(NATIVE_CLASS):
+		return null
+
+	if _native == null:
+		_native = ClassDB.instantiate(NATIVE_CLASS)
+
+	_native.configure(switch_ratio, commitment_grace, line_of_sight_enabled, prune_by_held, occlusion_mask)
+	return _native
+
+
+## The live blockers as 5 floats each (centre xyz, radius, until), in [member _blockers] order; drops
+## the expired ones, as [method sight_blocked] would before it read them.
+func packed_blockers() -> PackedFloat64Array:
+	var out := PackedFloat64Array()
+
+	for i in range(_blockers.size() - 1, -1, -1):
+		if now >= _blockers[i]["until"]:
+			_blockers.remove_at(i)
+
+	for b: Dictionary in _blockers:
+		var c: Vector3 = b["center"]
+		out.append_array([c.x, c.y, c.z, b["radius"], b["until"]])
+
+	return out
 
 
 func describe() -> Dictionary:

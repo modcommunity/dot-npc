@@ -38,6 +38,8 @@ Perception is the single biggest cost in the addon, so it is **staggered**: `sen
 
 **A quiet NPC senses less often.** `DotNpcLimits.sense_quiet_mult` (default 1, off) multiplies `sense_period_ticks` for an NPC whose last pass found nobody in reach and that holds no target; the moment a candidate comes in reach it is back on the normal period, so detection is late by at most `(mult - 1) * period` ticks. dot-game's `DotGameNpcLod` sets it from the `npc_sense_quiet` cvar.
 
+**The pass can run native** (`DotNpcSenses.native_enabled`, default false). With it on and dot-sim's `DotSimSenses` loaded (looked up by name, so nothing breaks without the library), `DotNpcPerception.perceive` hands the tick's due NPCs, the packed candidates and the live blockers to dot-sim in one call, which ranks, decides and casts the sight rays in the script's order and precision; the script then writes each NPC's result and emits `target_changed` as before. A subclass of `DotNpcSenses` keeps the script, since it may override `decide`. `native_verify` runs the script beside every native pass and counts disagreements in `native_mismatches`; game-zombie-zone's `headless_native_senses` is the parity suite. At 120 zombies it took senses from 4.08 to 2.38 ms a tick.
+
 ### `sight_scale` is per NPC, the definition's range per kind
 
 `DotNpcInstance.sight_scale` multiplies `DotNpcDef.sight_range` for one NPC. How far a kind can see belongs in the catalogue; how attentive this one is belongs to its character, and dot-npc-ai's brain writes the character's `alertness` here. Sight only: hearing is a loudness the game measured, and scaling it would be an NPC that hears a footstep further than the footstep travels.
