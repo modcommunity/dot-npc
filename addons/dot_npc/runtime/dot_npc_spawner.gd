@@ -205,11 +205,8 @@ func _ready() -> void:
 	if Engine.is_editor_hint():
 		return
 
-	if limits == null:
-		limits = DotNpcLimits.new()
-
-	if senses == null:
-		senses = DotNpcSenses.new()
+	limits = limits if limits != null else DotNpcLimits.new()
+	senses = senses if senses != null else DotNpcSenses.new()
 
 	senses.occlusion_mask = occlusion_mask
 
