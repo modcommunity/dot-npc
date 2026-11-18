@@ -44,15 +44,17 @@ var _copies: Dictionary = {}
 var _bad: Dictionary = {}
 
 # DotNpcNavLine and DotNpcNavSmooth by uid, not by name: both name this class back, and a script
-# loop stays in memory for good (Godot 4.7).
+# loop stays in memory for good (Godot 4.7). Both load in static initialisers, which run when this
+# script loads, on the main thread: a script first loaded on a WorkerThreadPool task (the first
+# graph copy made by a nav job) left one object behind at exit.
+static var _line_script: Script = load("uid://b67a3ugh5u6dt")
+static var _smooth_script: Script = load("uid://dde41xussakjv")
+
 ## Caches for [method can_walk_straight] and the cut edges.
-var _line: RefCounted = load("uid://b67a3ugh5u6dt").new()
-static var _smooth_script: Script = null
+var _line: RefCounted = _line_script.new()
 
 
 static func _smooth() -> Script:
-	if _smooth_script == null:
-		_smooth_script = load("uid://dde41xussakjv")
 	return _smooth_script
 
 
