@@ -1,4 +1,4 @@
-[![dot-npc - GameSpice addon](docs/banner.png)](https://moddingcommunity.com/a/227-dot-npc)
+[![NPC - GameSpice addon](docs/banner.png)](https://moddingcommunity.com/a/227-dot-npc)
 
 Computer-controlled characters for a Godot 4 game. dot-npc gives you a catalogue of NPC definitions, a population budget that keeps a server alive, perception that sticks to one target instead of flickering between two, and navigation generated from the constants a code-built map was drawn from. It needs only [dot-core](https://github.com/gamespice-platform/core). Part of TMC's open source [**GameSpice**](https://gamespice.net) collection (MIT licence).
 
