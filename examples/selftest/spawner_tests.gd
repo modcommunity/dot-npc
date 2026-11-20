@@ -310,7 +310,7 @@ func _test_pacing() -> void:
 	var toggled := _pace_run(true, false, 97)
 	_check(toggled == off, "pacing toggled every 97 ticks: the same log", _pace_diff(toggled, off))
 
-	# Five checks either way (CHECKS): with dot-sim the native pacer, without it the fallback when native is asked for.
+	# Five checks either way (CHECKS): with GameSpice Sim the native pacer, without it the fallback when native is asked for.
 	if ClassDB.class_exists(&"DotSimThinkPacer"):
 		var checks := [0, 0]
 		var native := _pace_run(true, true, 0, checks)

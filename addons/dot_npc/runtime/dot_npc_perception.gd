@@ -92,7 +92,7 @@ const _SEEN := 1
 const _SINCE := 2
 const _QUIET := 4
 
-## The pass in dot-sim: the same answers as the script loop above, applied in the same order.
+## The pass in GameSpice Sim: the same answers as the script loop above, applied in the same order.
 func _perceive_native(nat: Object, due: Array[DotNpcInstance]) -> void:
 	var n := due.size()
 	var senses := s.senses

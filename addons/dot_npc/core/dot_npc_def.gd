@@ -33,14 +33,14 @@ enum Weight {
 @export_group("Content")
 
 ## The scene instantiated on spawn.
-## May live in a dot-cloud pack, which the game must mount first.
+## May live in a GameSpice Cloud pack, which the game must mount first.
 @export var scene_path: String = ""
 
 ## The brain script, by path. Empty for an NPC the scene scripts itself.
 ## Never a class_name: a mounted pack cannot register one.
 @export var brain_script_path: String = ""
 
-## The dot-cloud content id this NPC lives in, or empty when it ships in the build.
+## The GameSpice Cloud content id this NPC lives in, or empty when it ships in the build.
 @export var content_id: StringName = &""
 
 @export_group("Simulation")

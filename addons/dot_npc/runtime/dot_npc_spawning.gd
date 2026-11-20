@@ -176,7 +176,7 @@ func seed_for(subject: int, from_game: bool = false) -> int:
 	)
 
 	# 2..2^31-1: positive and small enough to survive a float, and never 0 or 1, which
-	# dot-npc-ai reads as "this character still has the preset's seed".
+	# GameSpice NPC AI reads as "this character still has the preset's seed".
 	return stream.range_i_at(0, 2, 0x7FFFFFFF)
 
 

@@ -49,7 +49,7 @@ func _test_senses_commitment() -> void:
 
 
 ## `target_since` moves when a commitment does, and not while one is held.
-## dot-npc-ai measures reaction time against it; `engaged_at` refreshes every pass a target is seen, so a
+## GameSpice NPC AI measures reaction time against it; `engaged_at` refreshes every pass a target is seen, so a
 ## timer against that never elapses and every branch behind it never runs, with no error.
 func _test_target_since() -> void:
 	_section("commitment time")

@@ -64,7 +64,7 @@ const REASON_ADMIN := &"admin"
 
 ## The game's own stable number for an NPC, or none. `func(npc: DotNpcInstance) -> int`.
 ## Called once per spawn before the brain is bound; usually the entity id. Zero or no callable falls back to the
-## spawn count. A [Callable] because naming dot-entity would break parsing without it. Never return `get_instance_id()`.
+## spawn count. A [Callable] because naming GameSpice Entity would break parsing without it. Never return `get_instance_id()`.
 var seed_source: Callable = Callable()
 
 @export_group("Navigation")
@@ -103,7 +103,7 @@ var senses: DotNpcSenses = null
 
 ## Worker threads ranking candidates for a perception pass ([method DotNpcSenses.rank], over
 ## packed data); rays and commitment stay on this thread. 0 inline, -1 automatic. A host copies
-## its own setting here (dot-server's [code]sv_threads_npc[/code]); off on a machine without threads.
+## its own setting here (GameSpice Server's [code]sv_threads_npc[/code]); off on a machine without threads.
 var sense_workers: int = 0
 
 ## NPCs ranked per worker task: fewer, larger tasks keep the fork cheap.
@@ -125,7 +125,7 @@ var repath_interval_per_m: float = 0.0
 
 ## Worker threads answering a tick's repaths together ([method DotNpcNavGraph.find_paths]).
 ## 0 searches inline. Above 0 (-1 automatic) a repath is queued and answered after every brain has thought,
-## so that think follows the old path. A host copies dot-server's `sv_threads_npc` here.
+## so that think follows the old path. A host copies GameSpice Server's `sv_threads_npc` here.
 var path_workers: int = 0
 
 ## Queue every repath and answer it after the brains think even at [member path_workers] 0, so a run
@@ -268,7 +268,7 @@ func answer_paths() -> void:
 
 
 ## What the NPCs may perceive this tick. Called by the host before [method tick].
-## Pushed, not pulled, which keeps dot-combat and dot-net out of this addon: a candidate is an id,
+## Pushed, not pulled, which keeps GameSpice Combat and GameSpice Net out of this addon: a candidate is an id,
 ## a position, a faction and a loudness.
 func set_candidates(candidates: Array) -> void:
 	_candidates = candidates
@@ -429,7 +429,7 @@ func _refuse(owner_id: StringName, npc_id: StringName, reason: String) -> void:
 
 
 ## Hurts an NPC. Returns how much health it actually lost.
-## Handled here when dot-combat is absent; a game with dot-combat calls [method report_death] from its health
+## Handled here when GameSpice Combat is absent; a game with GameSpice Combat calls [method report_death] from its health
 ## component instead. Both end at the same [signal died], so scoring is written once.
 func damage(instance_id: int, amount: float, by: StringName = &"") -> float:
 	if not authoritative or amount <= 0.0:
@@ -461,7 +461,7 @@ func damage(instance_id: int, amount: float, by: StringName = &"") -> float:
 
 
 ## Declares an NPC dead. Called by [method damage], or by a game whose health is
-## dot-combat's.
+## GameSpice Combat's.
 func report_death(instance_id: int, by: StringName = &"") -> bool:
 	var npc := get_npc(instance_id)
 

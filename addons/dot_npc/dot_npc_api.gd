@@ -1,6 +1,6 @@
 extends RefCounted
 
-## dot-npc's API level. The rule for bumping it is on [DotAddonApi].
+## GameSpice NPC's API level. The rule for bumping it is on [DotAddonApi].
 ## LEVEL rises for anything new a game could call; OLDEST rises when something callable is
 ## removed or changes meaning, since older packs no longer compile.
 

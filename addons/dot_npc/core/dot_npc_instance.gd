@@ -18,7 +18,7 @@ var node: Node = null
 var instance_id: int = 0
 
 ## This NPC's own random seed: the same number for the same spawn in every run.
-## Set by [DotNpcSpawner] before the brain is bound. Always above 1, because dot-npc-ai reads 0 or 1
+## Set by [DotNpcSpawner] before the brain is bound. Always above 1, because GameSpice NPC AI reads 0 or 1
 ## as "still the preset's". Zero means built by hand. Not [member instance_id], which moves with unrelated objects.
 var seed: int = 0
 

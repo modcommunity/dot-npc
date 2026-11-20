@@ -67,7 +67,7 @@ extends DotConfig
 @export_group("Threads")
 
 ## Worker threads for the decide step of brains that split their think and are thread safe. 0 = decide inline, -1 = automatic.
-## The result is identical either way. A host copies dot-server's `sv_threads_npc` here; [member DotNpcSpawner.think_workers] wins when it is set.
+## The result is identical either way. A host copies GameSpice Server's `sv_threads_npc` here; [member DotNpcSpawner.think_workers] wins when it is set.
 @export_range(-1, 16, 1) var think_workers: int = 0
 
 

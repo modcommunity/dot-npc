@@ -25,7 +25,7 @@ func _test_net_sync() -> void:
 	var spawner := _spawner()
 	var npc := spawner.spawn(&"walker", Vector3(3, 0, -4))
 
-	# A plain object with the properties set, because dot-net is not here to make a
+	# A plain object with the properties set, because GameSpice Net is not here to make a
 	# behaviour. What is being tested is the quantisation, not the transport.
 	var probe := _NetProbe.new()
 	DotNpcNetSync.pull(npc, probe, DotNpcNetSync.State.MOVING)
@@ -101,7 +101,7 @@ func _net_apply_checks(spawner: DotNpcSpawner, probe: _NetProbe) -> void:
 	node.queue_free()
 
 
-## The receiving half of a replication, without dot-net in the project.
+## The receiving half of a replication, without GameSpice Net in the project.
 class _NetProbe:
 	extends RefCounted
 
@@ -315,7 +315,7 @@ func _test_spawning_2d() -> void:
 	)
 
 	# And it moves. `steer_toward` has no 2D branch worth the name if the body never goes
-	# anywhere, and a brain that silently does nothing is dot-npc's own most repeated bug.
+	# anywhere, and a brain that silently does nothing is GameSpice NPC's own most repeated bug.
 	var before := swarmer.position_2d()
 
 	for _step in range(20):

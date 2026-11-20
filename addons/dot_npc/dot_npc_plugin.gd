@@ -1,7 +1,7 @@
 @tool
 extends EditorPlugin
 
-## Editor entry point for dot-npc. Registers inspector types only.
+## Editor entry point for GameSpice NPC. Registers inspector types only.
 ## No autoloads: a server running two worlds in one process holds two spawners, each with its own budget.
 
 const _ICON := "res://addons/dot_npc/icon_placeholder.svg"

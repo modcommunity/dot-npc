@@ -1,5 +1,5 @@
 extends Node
-## State, counters and builders shared by the dot-npc suite layers.
+## State, counters and builders shared by the GameSpice NPC suite layers.
 
 const BODY := "res://fixtures/npc_body.tscn"
 const BODY_2D := "res://fixtures/npc_body_2d.tscn"

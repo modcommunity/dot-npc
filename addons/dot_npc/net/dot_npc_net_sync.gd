@@ -2,7 +2,7 @@ class_name DotNpcNetSync
 extends RefCounted
 
 ## What an NPC has to tell every client, and how to get it there.
-## dot-net is not imported (a script naming a missing class_name fails to parse): types are strings a bridge
+## GameSpice Net is not imported (a script naming a missing class_name fails to parse): types are strings a bridge
 ## resolves with `DotNetVar.Type[spec.type]`. All interpolated, nothing predicted. Health is a percentage.
 
 ## Health as 0-100. Seven bits, because a client only ever draws a bar with it.
@@ -39,7 +39,7 @@ static func limb_specs() -> Array[Dictionary]:
 
 static func specs() -> Array[Dictionary]:
 	return [
-				# Position as three floats, not a packed vector: dot-net quantises per property and a game's
+				# Position as three floats, not a packed vector: GameSpice Net quantises per property and a game's
 				# world extent is its own, so one packed type would force the larger bit count on both.
 				# The bridge sets the range.
 		{"property": &"net_x", "type": "FLOAT", "bits": 0, "interpolated": true},
@@ -71,7 +71,7 @@ static func properties() -> Array[StringName]:
 
 
 ## Copies an NPC's state onto a replicating object.
-## [param state] is the game's: dot-npc does not know whether an NPC is mid-swing.
+## [param state] is the game's: GameSpice NPC does not know whether an NPC is mid-swing.
 static func pull(npc: DotNpcInstance, into: Object, state: int = State.IDLE) -> void:
 	if npc == null or into == null:
 		return
@@ -118,7 +118,7 @@ static func quantise_yaw(yaw: float) -> int:
 	var steps := 1 << YAW_BITS
 
 		# `fposmod` before the multiply: a yaw of exactly TAU would quantise to `steps`, one past the
-		# field's largest value, which dot-net's writer truncates to 0 and turns the body backwards once per turn.
+		# field's largest value, which GameSpice Net's writer truncates to 0 and turns the body backwards once per turn.
 	return int(fposmod(yaw, TAU) / TAU * float(steps)) % steps
 
 

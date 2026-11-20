@@ -8,7 +8,7 @@ The consequence everything else follows from: **the brain is named by PATH, neve
 
 ## Server-authoritative, and not predicted
 
-Everything else in this family is built so a client can predict it. NPCs deliberately are not, and the reason is stronger than dot-props':
+Everything else in this family is built so a client can predict it. NPCs deliberately are not, and the reason is stronger than GameSpice Props':
 
 An NPC's position is the output of a pathfinder over a graph, a steering pass and, for a rigid-body NPC, a physics solver. None of that is reproducible across machines: iteration order, island membership and the last bits of every float differ. Two runs of the same horde diverge within a second, so a predicted NPC is a **constantly corrected** NPC, which looks far worse than one interpolated a few tens of milliseconds behind.
 
@@ -36,7 +36,7 @@ Perception is the single biggest cost in the addon, so it is **staggered**: `sen
 
 **The committed target is tested first** (`DotNpcSenses.prune_by_held`, default true). When it is perceived, only a rival nearer than `switch_ratio` of its distance could take over, so the nearest-first pass stops after the last such rival; when it is not, the full pass runs without casting at it again. The answer is the full pass's exactly (the suite compares 600 random scenes against `prune_by_held = false`); at 100 players and 248 zombies it cast 15% fewer rays and took senses from 4.83 to 4.40 ms a tick with every kill and damage counter unchanged.
 
-**A quiet NPC senses less often.** `DotNpcLimits.sense_quiet_mult` (default 1, off) multiplies `sense_period_ticks` for an NPC whose last pass found nobody in reach and that holds no target; the moment a candidate comes in reach it is back on the normal period, so detection is late by at most `(mult - 1) * period` ticks. dot-game's `DotGameNpcLod` sets it from the `npc_sense_quiet` cvar.
+**A quiet NPC senses less often.** `DotNpcLimits.sense_quiet_mult` (default 1, off) multiplies `sense_period_ticks` for an NPC whose last pass found nobody in reach and that holds no target; the moment a candidate comes in reach it is back on the normal period, so detection is late by at most `(mult - 1) * period` ticks. GameSpice Game's `DotGameNpcLod` sets it from the `npc_sense_quiet` cvar.
 
 **The pass can run native** (`DotNpcSenses.native_enabled`, default false). With it on and dot-sim's `DotSimSenses` loaded (looked up by name, so nothing breaks without the library), `DotNpcPerception.perceive` hands the tick's due NPCs, the packed candidates and the live blockers to dot-sim in one call, which ranks, decides and casts the sight rays in the script's order and precision; the script then writes each NPC's result and emits `target_changed` as before. A subclass of `DotNpcSenses` keeps the script, since it may override `decide`. `native_verify` runs the script beside every native pass and counts disagreements in `native_mismatches`; game-zombie-zone's `headless_native_senses` is the parity suite. At 120 zombies it took senses from 4.08 to 2.38 ms a tick.
 
@@ -55,7 +55,7 @@ Perception is the single biggest cost in the addon, so it is **staggered**: `sen
 | `engaged_at` | **Refreshed on every pass in which the target is perceived.** "Is this NPC still busy?": what `DotNpcLimits.reclaim_grace` is measured from. |
 | `target_since` | **Set when `target_id` changes, and not while it is held.** "How long has it known about this one?": what a reaction time is measured from. |
 
-Measuring a reaction time from `engaged_at` never finishes reacting (dot-npc-ai's `has_reacted()` was false for ever that way). The subtle half: **re-perceiving the same target after a gap** is not a new commitment, so `update_target` only moves `target_since` when the id actually changes; restarting the clock there is an NPC that never finishes reacting to somebody who keeps stepping behind a pillar.
+Measuring a reaction time from `engaged_at` never finishes reacting (GameSpice NPC AI's `has_reacted()` was false for ever that way). The subtle half: **re-perceiving the same target after a gap** is not a new commitment, so `update_target` only moves `target_since` when the id actually changes; restarting the clock there is an NPC that never finishes reacting to somebody who keeps stepping behind a pillar.
 
 ## An NPC's seed is per spawn, never its object id
 
@@ -101,7 +101,7 @@ A brain that overrides `splits_think()` does not use `_npc_think`: the spawner r
 
 `died` fires while the node still exists, names who did it, and is what a scoring layer listens to. `removed` fires for every departure including a director tidying up something nobody could see. A game with only `removed` would either award a kill for the tidy-up or have to guess.
 
-Health is handled here when dot-combat is absent and handed to it when it is present, without this addon ever naming dot-combat: a game with combat calls `report_death()` from its own health component, a game without it calls `damage()`, and both end at the same signal. `DotNpcBrain._npc_damaged` is called on damage; the suite asserts the *hook* rather than the signal, because a hook called by nothing is the family's most repeated bug.
+Health is handled here when GameSpice Combat is absent and handed to it when it is present, without this addon ever naming GameSpice Combat: a game with combat calls `report_death()` from its own health component, a game without it calls `damage()`, and both end at the same signal. `DotNpcBrain._npc_damaged` is called on damage; the suite asserts the *hook* rather than the signal, because a hook called by nothing is the family's most repeated bug.
 
 ## A brain and its NPC point at each other, so the spawner lets go of both
 
@@ -128,7 +128,7 @@ So `DotNpcBrain.unbind()` clears `npc`, `director` and `path` after calling `_np
 - **No behaviour tree, no state machine, no utility scoring.** That is dot-npc-ai, a separate addon, so a game that wants a catalogue and a budget does not install a decision engine it will not use.
 - **No population director.** That is dot-npc-ai-director.
 - **No animation.** A `DotNpcNetSync.State` is what a client picks one with; picking it is the game's.
-- **No melee, no ranged attacks, no damage types.** dot-combat is where a weapon lives, and an NPC that swings is a brain calling into it.
+- **No melee, no ranged attacks, no damage types.** GameSpice Combat is where a weapon lives, and an NPC that swings is a brain calling into it.
 - Navigation's own gaps are in [navigation.md](navigation.md#not-here).
 
 ## Definitions from profiles

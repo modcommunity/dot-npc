@@ -1,7 +1,7 @@
 class_name DotNpcPacing
 extends RefCounted
 ## The spawner's think pacing: counts the ticks of every brain that [method DotNpcBrain.paces] in one batch,
-## natively when dot-sim's `DotSimThinkPacer` is loaded, so only the brains due this tick are called.
+## natively when GameSpice Sim's `DotSimThinkPacer` is loaded, so only the brains due this tick are called.
 ## Off ([member DotNpcSpawner.pacing] false) the spawner calls every brain every tick, as before.
 ##
 ## Exactly what the brains' own counting gives: the same brains think on the same ticks with the same seconds,

@@ -1,12 +1,12 @@
-# dot-npc
+# GameSpice NPC
 
 **What an NPC is.** A catalogue of definitions, spawning with a population budget, health and damage, a perception layer that commits to a target, and navigation generated from the constants a code-built map was drawn from. 3D and 2D (the XZ plane).
 
-Also requires **dot-profile** (`DotProfileSet`, `DotProfile`, `DotProfileRuntime`, split from dot-core): link `addons/dot_profile` next to `addons/dot_core`.
+Also requires **GameSpice Profile** (`DotProfileSet`, `DotProfile`, `DotProfileRuntime`, split from GameSpice Core): link `addons/dot_profile` next to `addons/dot_core`.
 
 Read the family [CLAUDE.md](../../CLAUDE.md) first; this file is only what is specific to NPCs. How one decides is dot-npc-ai; population and pacing are dot-npc-ai-director.
 
-**Depends on dot-core and nothing else.** Not dot-net, dot-combat or dot-map: each is a seam a host wires up, and naming any of them would make this addon fail to parse in a project that does not have it.
+**Depends on GameSpice Core and nothing else.** Not GameSpice Net, GameSpice Combat or GameSpice Map: each is a seam a host wires up, and naming any of them would make this addon fail to parse in a project that does not have it.
 
 Profiles: `DotNpcProfiles` (the `npc` kind) offers `profile_schemas()`, so dot-core's `tools/profile_check.gd` (dot-ci `profiles: true`) validates a repo's `cfg/**/npc/*.yml` with no `--schema` script (API 4).
 
@@ -29,7 +29,7 @@ Profiles: `DotNpcProfiles` (the `npc` kind) offers `profile_schemas()`, so dot-c
 | `addons/dot_npc/runtime/dot_npc_limbs.gd` | `DotNpcLimbs`: shootable limbs on a body (regions from bones, health, `mask()` for `DotNpcNetSync.limb_specs()`, `speed_scale()`); tuned by `limbs:` in `cfg/addons/dot-npc/*.yml` |
 | `addons/dot_npc/runtime/dot_npc_hover.gd` | `DotNpcHover`: a jetpack as a state machine (lift, cruise, hover, land, fuel, disable) that returns the velocity to move at; holds no node and does no pathing |
 | `addons/dot_npc/core/dot_npc_gore.gd` | `DotNpcGore`: the process-wide gore dial (`level` 0 off, 1 stumps, 2 gibs and spray, 3 softer limbs and heavier spray; `max_gibs`). A game maps its cvars `gore_level` / `gore_max_gibs` / `gore_max_wounds` onto it; level 0 makes every limb call a no-op. **Replication design**: no gore level crosses the wire. The server's `level` decides whether a limb comes off, which reaches clients as the limb mask; `view_cap` is the player's own ceiling (their `gore` setting) and only trims what a machine draws (`drawn_level()`), so a client can never show more than the server allowed. `DotNpcGibs.add_wound` / `add_pool` draw pooled wound marks and floor blood, client-only, capped by `max_wounds` |
-| `addons/dot_npc/net/` | `DotNpcNetSync`: what replicates, as strings; never names dot-net |
+| `addons/dot_npc/net/` | `DotNpcNetSync`: what replicates, as strings; never names GameSpice Net |
 | `fixtures/` | bodies (3D and 2D) and brains for the suite, written the pack-safe way |
 | `examples/npc_selftest.tscn` | the suite |
 
@@ -83,7 +83,7 @@ Profiles: `DotNpcProfiles` (the `npc` kind) offers `profile_schemas()`, so dot-c
 | What one area of the map costs to cross | `DotNpcNavFilter.set_area_cost`, per NPC |
 | What one kind of NPC cannot traverse | `DotNpcDef.nav_exclude_flags` |
 | Whether paths are smoothed or may stop short | `DotNpcSpawner.smooth_paths` / `allow_partial_paths` |
-| Whether repaths run on worker threads | `DotNpcSpawner.path_workers`, from dot-server's `npc_workers()` (`sv_threads_npc`); 0 is inline. `deferred_paths` answers a tick later at any count, so 0 and N workers give the same run. [navigation](docs/navigation.md#at-scale) |
+| Whether repaths run on worker threads | `DotNpcSpawner.path_workers`, from GameSpice Server's `npc_workers()` (`sv_threads_npc`); 0 is inline. `deferred_paths` answers a tick later at any count, so 0 and N workers give the same run. [navigation](docs/navigation.md#at-scale) |
 | Where cover is | `DotNpcNavBuilder.generate_cover` / `cover_range`, or `DotNpcNavData.add_cover` from a generator that has the geometry |
 | Where NPCs are added | `DotNpcSpawner.world_ref`, a `DotNodeRef` |
 | What replicates | `DotNpcNetSync.specs()`, resolved by the game's bridge |
